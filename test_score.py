@@ -71,3 +71,17 @@ def test_cause_percentiles_rank_within_each_cause():
     assert out["c"] == (3, 3, round(100 / 3, 1))
     assert out["d"] == (1, 1, 100.0)
     assert "e" not in out
+
+
+def test_ensure_database_retries_when_local_db_is_empty(tmp_path):
+    import db
+    empty = tmp_path / "x.db"
+    db.connect(empty).close()          # schema only, no scores
+    assert not db.ensure_database(empty, url="http://127.0.0.1:9/nothing.gz")
+    assert not empty.exists()          # the empty file is cleared for the next try
+    full = tmp_path / "y.db"
+    conn = db.connect(full)
+    db.save_scores(conn, {"1": dict(score=1, confidence=1, components={}, latest_year=2024,
+                                    latest_revenue=1, years_on_file=1, size_band="Unknown")})
+    conn.close()
+    assert db.ensure_database(full, url="http://127.0.0.1:9/nothing.gz")

@@ -143,7 +143,10 @@ def ensure_database(path=DB_PATH, url=DATA_URL) -> bool:
     """
     path = Path(path)
     if path.exists() and path.stat().st_size > 0:
-        return True
+        if _has_scores(path):
+            return True
+        # An empty schema from an earlier start that could not download.
+        path.unlink()
     partial = path.with_suffix(".db.download")
     try:
         print(f"downloading {url}", file=sys.stderr)
@@ -155,6 +158,14 @@ def ensure_database(path=DB_PATH, url=DATA_URL) -> bool:
     except Exception as exc:  # noqa: BLE001 - any failure means "start empty"
         print(f"could not download database: {exc}", file=sys.stderr)
         partial.unlink(missing_ok=True)
+        return False
+
+
+def _has_scores(path) -> bool:
+    try:
+        with sqlite3.connect(str(path)) as probe:
+            return probe.execute("SELECT COUNT(*) FROM scores").fetchone()[0] > 0
+    except sqlite3.Error:
         return False
 
 
