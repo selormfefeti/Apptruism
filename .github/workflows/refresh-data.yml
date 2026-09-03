@@ -1,0 +1,43 @@
+name: Refresh data
+
+# Rebuilds apptruism.db from the ProPublica API and publishes it gzipped as
+# the asset of a release tagged "data". The app downloads that file on
+# startup when it has no local database, which is how the hosted copy gets
+# its data without a 70 MB binary landing in the repo every month.
+
+on:
+  schedule:
+    - cron: "0 6 1 * *"   # 06:00 UTC on the 1st of each month
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/refresh-data.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Fetch every seed organization
+        run: python fetch.py --load-seed
+      - name: Score
+        run: python score.py
+      - name: Compress
+        run: gzip -9 -k apptruism.db && ls -la apptruism.db.gz
+      - name: Publish as the "data" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view data >/dev/null 2>&1 \
+            || gh release create data --title "Latest data" \
+                 --notes "Rebuilt automatically by the refresh-data workflow. Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."
+          gh release upload data apptruism.db.gz --clobber
+          gh release edit data --notes "Rebuilt $(date -u +%Y-%m-%d) by the refresh-data workflow. Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."

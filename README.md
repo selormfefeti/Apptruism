@@ -36,6 +36,12 @@ Fetching is resumable. Run `fetch.py` again without `--limit` to pull the rest
 of the seed list; it takes about an hour or two for all 20,000. Rerun
 `score.py` after any fetch.
 
+Or skip the fetch: if there is no `apptruism.db` when the app starts, it
+downloads the latest published one from the repo's `data` release. A
+GitHub Action rebuilds and republishes that file on the first of each month,
+and can be run by hand from the Actions tab. The hosted copy on Streamlit
+Community Cloud gets its data the same way.
+
 ```bash
 ./venv/bin/python -m pytest
 ```

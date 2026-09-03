@@ -16,13 +16,22 @@ Everything sits in SQLite so the whole thing runs from a laptop. Four tables:
 from __future__ import annotations
 
 import csv
+import gzip
 import json
+import shutil
 import sqlite3
+import sys
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "apptruism.db"
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
+
+# The refresh-data workflow rebuilds the database monthly and publishes it
+# gzipped as a GitHub release asset. A fresh checkout, including the hosted
+# app, downloads it from here instead of spending an hour on the API.
+DATA_URL = "https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz"
 
 # The categories the 2019 spreadsheets were tagged with, spelled the way the
 # Categories sheet spells them. Rows were tagged by hand so the casing drifts.
@@ -124,6 +133,29 @@ ORG_COLUMNS = [
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def ensure_database(path=DB_PATH, url=DATA_URL) -> bool:
+    """
+    Download the published database if there is none at path. Returns True
+    when a database is present afterwards. Failure is not fatal: the app
+    just starts empty and says so.
+    """
+    path = Path(path)
+    if path.exists() and path.stat().st_size > 0:
+        return True
+    partial = path.with_suffix(".db.download")
+    try:
+        print(f"downloading {url}", file=sys.stderr)
+        with urllib.request.urlopen(url, timeout=120) as resp, gzip.GzipFile(fileobj=resp) as gz, \
+                open(partial, "wb") as out:
+            shutil.copyfileobj(gz, out)
+        partial.replace(path)
+        return True
+    except Exception as exc:  # noqa: BLE001 - any failure means "start empty"
+        print(f"could not download database: {exc}", file=sys.stderr)
+        partial.unlink(missing_ok=True)
+        return False
 
 
 def connect(path=DB_PATH) -> sqlite3.Connection:

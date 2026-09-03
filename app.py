@@ -36,6 +36,7 @@ SIZE_ORDER = ["Under $100k", "$100k to $1M", "$1M to $10M", "Over $10M", "Unknow
 
 @st.cache_resource
 def database():
+    db.ensure_database()
     return db.connect()
 
 
