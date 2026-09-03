@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.db
+*.db-journal
+.pytest_cache/
+.DS_Store
+fetch.log
+review.xlsx
+*.db-wal
+*.db-shm
