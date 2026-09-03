@@ -85,7 +85,9 @@ CURRENT_YEAR = pd.Timestamp.today().year
 df = ranking(STAMP)
 if df.empty:
     st.title("Apptruism")
-    st.warning("No data yet. Run these, then refresh:")
+    st.warning("No data yet. The published database was not available when this app started; "
+               "it is rebuilt monthly and downloaded on startup, so try again in a little while.")
+    st.caption("Running this locally? Build the data yourself, then refresh:")
     st.code("python fetch.py --load-seed --limit 300\npython score.py", language="bash")
     st.stop()
 
