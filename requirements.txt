@@ -1,4 +1,9 @@
-pandas==2.3.3
-pytest==8.4.2
-requests==2.32.5
-streamlit==1.50.0
+# Ranges rather than pins: this Mac runs Python 3.9, where streamlit stops at
+# 1.50, while Streamlit Community Cloud runs Python 3.14, which needs a newer
+# streamlit and altair 6. pandas 3 changes string and copy semantics, so it
+# stays out until it has been tested.
+streamlit>=1.50,<2
+pandas>=2.3,<3
+requests>=2.32
+pytest>=8
+openpyxl>=3.1
