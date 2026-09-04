@@ -33,6 +33,9 @@ SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 # app, downloads it from here instead of spending an hour on the API.
 DATA_URL = "https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz"
 
+# Why the last ensure_database() could not download, for the empty-state page.
+LAST_DOWNLOAD_ERROR = None
+
 # The categories the 2019 spreadsheets were tagged with, spelled the way the
 # Categories sheet spells them. Rows were tagged by hand so the casing drifts.
 CATEGORIES = [
@@ -141,22 +144,25 @@ def ensure_database(path=DB_PATH, url=DATA_URL) -> bool:
     when a database is present afterwards. Failure is not fatal: the app
     just starts empty and says so.
     """
+    global LAST_DOWNLOAD_ERROR
     path = Path(path)
     if path.exists() and path.stat().st_size > 0:
         if _has_scores(path):
             return True
         # An empty schema from an earlier start that could not download.
         path.unlink()
-    partial = path.with_suffix(".db.download")
+    partial = path.with_name(path.name + ".download")
     try:
         print(f"downloading {url}", file=sys.stderr)
         with urllib.request.urlopen(url, timeout=120) as resp, gzip.GzipFile(fileobj=resp) as gz, \
                 open(partial, "wb") as out:
             shutil.copyfileobj(gz, out)
         partial.replace(path)
+        LAST_DOWNLOAD_ERROR = None
         return True
     except Exception as exc:  # noqa: BLE001 - any failure means "start empty"
-        print(f"could not download database: {exc}", file=sys.stderr)
+        LAST_DOWNLOAD_ERROR = f"{type(exc).__name__}: {exc}"
+        print(f"could not download database: {LAST_DOWNLOAD_ERROR}", file=sys.stderr)
         partial.unlink(missing_ok=True)
         return False
 
