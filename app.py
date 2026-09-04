@@ -36,8 +36,13 @@ SIZE_ORDER = ["Under $100k", "$100k to $1M", "$1M to $10M", "Over $10M", "Unknow
 
 @st.cache_resource
 def database():
-    db.ensure_database()
     return db.connect()
+
+
+# Runs on every script run, and is cheap when the data is already there. A
+# download replaces the file under the cached connection, so drop that.
+if db.ensure_database() == "downloaded":
+    database.clear()
 
 
 @st.cache_data

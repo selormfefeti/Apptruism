@@ -138,19 +138,21 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def ensure_database(path=DB_PATH, url=DATA_URL) -> bool:
+def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35):
     """
-    Download the published database if there is none at path. Returns True
-    when a database is present afterwards. Failure is not fatal: the app
-    just starts empty and says so.
+    Make sure a database with scores exists at path, downloading the
+    published one when there is none or when the local one is older than
+    max_age_days. Returns "present" (nothing to do, or download failed but
+    the old file is still usable), "downloaded" (callers holding an open
+    connection should reopen it), or None (no usable database at all).
     """
     global LAST_DOWNLOAD_ERROR
     path = Path(path)
-    if path.exists() and path.stat().st_size > 0:
-        if _has_scores(path):
-            return True
-        # An empty schema from an earlier start that could not download.
-        path.unlink()
+    have = path.exists() and path.stat().st_size > 0 and _has_scores(path)
+    if have and not _stale(path, max_age_days):
+        return "present"
+    if path.exists() and not have:
+        path.unlink()  # an empty schema from a start that could not download
     partial = path.with_name(path.name + ".download")
     try:
         print(f"downloading {url}", file=sys.stderr)
@@ -159,12 +161,24 @@ def ensure_database(path=DB_PATH, url=DATA_URL) -> bool:
             shutil.copyfileobj(gz, out)
         partial.replace(path)
         LAST_DOWNLOAD_ERROR = None
-        return True
-    except Exception as exc:  # noqa: BLE001 - any failure means "start empty"
+        return "downloaded"
+    except Exception as exc:  # noqa: BLE001 - any failure means "carry on with what we have"
         LAST_DOWNLOAD_ERROR = f"{type(exc).__name__}: {exc}"
         print(f"could not download database: {LAST_DOWNLOAD_ERROR}", file=sys.stderr)
         partial.unlink(missing_ok=True)
+        return "present" if have else None
+
+
+def _stale(path, max_age_days) -> bool:
+    if not max_age_days:
         return False
+    try:
+        with sqlite3.connect(str(path)) as probe:
+            stamp = probe.execute("SELECT MAX(computed_at) FROM scores").fetchone()[0]
+        computed = datetime.fromisoformat(stamp)
+    except (sqlite3.Error, TypeError, ValueError):
+        return True
+    return (datetime.now(timezone.utc) - computed).days > max_age_days
 
 
 def _has_scores(path) -> bool:

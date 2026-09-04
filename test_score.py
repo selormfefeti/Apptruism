@@ -75,13 +75,21 @@ def test_cause_percentiles_rank_within_each_cause():
 
 def test_ensure_database_retries_when_local_db_is_empty(tmp_path):
     import db
+    bad = "http://127.0.0.1:9/nothing.gz"
     empty = tmp_path / "x.db"
     db.connect(empty).close()          # schema only, no scores
-    assert not db.ensure_database(empty, url="http://127.0.0.1:9/nothing.gz")
+    assert db.ensure_database(empty, url=bad) is None
     assert not empty.exists()          # the empty file is cleared for the next try
+
     full = tmp_path / "y.db"
     conn = db.connect(full)
     db.save_scores(conn, {"1": dict(score=1, confidence=1, components={}, latest_year=2024,
                                     latest_revenue=1, years_on_file=1, size_band="Unknown")})
+    assert db.ensure_database(full, url=bad) == "present"
+
+    conn.execute("UPDATE scores SET computed_at = '2020-01-01T00:00:00+00:00'")
+    conn.commit()
     conn.close()
-    assert db.ensure_database(full, url="http://127.0.0.1:9/nothing.gz")
+    # Stale, but the download fails, so the old file stays in use.
+    assert db.ensure_database(full, url=bad, max_age_days=35) == "present"
+    assert full.exists()
