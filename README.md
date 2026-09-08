@@ -12,17 +12,25 @@ organizations hand-tagged by cause.
 
 ## What it does
 
-1. `fetch.py` pulls each seed organization's record from the ProPublica
+1. `universe.py` reads the IRS Exempt Organizations master file, the list of
+   every tax-exempt organization, and keeps the ones the score can read:
+   501(c)(3)s that file a Form 990 or 990-EZ with income of $50,000 or more,
+   about 373,000 of them. Organizations that have left the IRS list are
+   marked inactive.
+2. `fetch.py` pulls each organization's record from the ProPublica
    Nonprofit Explorer API (free, no key) into SQLite: who they are, and a
    financial extract of every Form 990 or 990-EZ on file.
-2. `score.py` turns those filings into a 0-100 score from four components:
+3. `score.py` turns those filings into a 0-100 score from four components:
    donor growth, operating margin, reserves and officer pay share, with
    separate weights for the full 990 and the 990-EZ. A confidence figure,
    built from coverage, depth of history, recency, stability and whether
    the numbers reconcile, says how far to trust the score. Both are
    explained in the module docstring and on the app page.
-3. `app.py` is a Streamlit page: filter by cause, state and size, see the
+4. `app.py` is a Streamlit page: filter by cause, state and size, see the
    ranking, click an organization to see its components and money over time.
+
+Causes come from the 2019 hand tags where they exist and from the NTEE code
+otherwise; the page says which.
 
 ## Run it
 
@@ -32,6 +40,10 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 ./venv/bin/python score.py
 ./venv/bin/streamlit run app.py
 ```
+
+To grow past the seed, `python universe.py` downloads the IRS master file
+(about 340 MB) and queues every organization in the target set;
+`fetch.py --limit N` then works through them.
 
 Fetching is resumable. Run `fetch.py` again without `--limit` to pull the rest
 of the seed list; it takes about an hour or two for all 20,000. Rerun
@@ -61,6 +73,7 @@ hosted copy on Streamlit Community Cloud follows on its own.
 
 ```
 app.py          Streamlit page
+universe.py     who belongs, from the IRS master file
 fetch.py        pull ProPublica data into apptruism.db
 score.py        scoring rules and the scores table
 db.py           SQLite schema and queries
@@ -89,6 +102,9 @@ cover them. Fixing that is the next scoring change.
 
 ## Not yet
 
+- The backfill from the 2019 seed to the full target set, about 362,000
+  organizations, and the switch to NTEE as the primary taxonomy once they
+  are in.
 - Program expense ratio. ProPublica's extract does not carry program
   expenses; that needs the raw XML from the IRS zips.
 - Anything from the 2020 pitch beyond ranking: maps, news, payroll giving,

@@ -31,7 +31,7 @@ DB_PATH = Path(__file__).parent / "apptruism.db"
 # so a code pull that changes the schema reopens the connection and the
 # migrations in connect() run, instead of an old connection querying a
 # column it never learned about.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 
@@ -67,6 +67,50 @@ CATEGORIES = [
 UNCATEGORIZED = "Uncategorized"
 _CANON = {c.lower(): c for c in CATEGORIES}
 
+# Organizations without a 2019 hand tag get a cause from their NTEE code,
+# the IRS classification the master file and ProPublica both carry. Letters
+# are the NTEE major group; a few three-character codes override the letter.
+NTEE_CAUSE = {
+    "A": "Arts, Culture and Humanities",
+    "B": "Educational Institutions and Related Activities",
+    "C": "Environmental",
+    "D": "Animal Rights",
+    "E": "Health Care", "F": "Health Care", "G": "Health Care",
+    "H": "Medical Research",
+    "I": "Human Services", "J": "Human Services", "K": "Human Services",
+    "L": "Human Services", "M": "Human Services",
+    "N": "Recreation, Sports, Leisure, Athletics",
+    "O": "Educational Institutions and Related Activities",
+    "P": "Human Services",
+    "Q": "International",
+    "R": "Human Rights",
+    "S": "Trade Development",
+    "T": "Philanthropy and Grantmaking",
+    "U": "Other", "V": "Other", "W": "Other", "Y": "Other",
+    "X": "Religious Organization",
+}
+NTEE_CAUSE_EXACT = {
+    "W30": "Military and Veterans Organization",
+    "J40": "Labor/Workers' Rights",
+}
+
+
+def ntee_cause(code) -> str | None:
+    code = (code or "").strip().upper()
+    if not code:
+        return None
+    return NTEE_CAUSE_EXACT.get(code[:3]) or NTEE_CAUSE.get(code[0])
+
+
+def cause_for(seed_category, ntee_code) -> tuple[str, str]:
+    """(cause, where it came from): the 2019 hand tag when there is one, else NTEE."""
+    if seed_category and seed_category != UNCATEGORIZED:
+        return seed_category, "2019 tag"
+    mapped = ntee_cause(ntee_code)
+    if mapped:
+        return mapped, "NTEE"
+    return UNCATEGORIZED, "none"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS seed (
     ein TEXT PRIMARY KEY,
@@ -89,7 +133,24 @@ CREATE TABLE IF NOT EXISTS orgs (
     ruling_date TEXT,
     latest_tax_period TEXT,
     fetch_status TEXT,
-    fetched_at TEXT
+    fetched_at TEXT,
+    active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS universe (
+    ein TEXT PRIMARY KEY,
+    name TEXT,
+    city TEXT,
+    state TEXT,
+    zipcode TEXT,
+    ntee_code TEXT,
+    subsection TEXT,
+    filing_req TEXT,
+    ruling TEXT,
+    income_amt REAL,
+    revenue_amt REAL,
+    asset_amt REAL,
+    first_seen TEXT,
+    last_seen TEXT
 );
 CREATE TABLE IF NOT EXISTS filings (
     ein TEXT NOT NULL,
@@ -134,6 +195,7 @@ MIGRATIONS = [
     ("scores", "cause_total", "INTEGER"),
     ("scores", "cause_pct", "REAL"),
     ("scores", "confidence_factors", "TEXT"),
+    ("orgs", "active", "INTEGER DEFAULT 1"),
 ]
 
 FILING_COLUMNS = [
@@ -275,23 +337,31 @@ def load_seed(conn, csv_path=SEED_PATH) -> int:
 
 
 def pending_eins(conn, category=None, retry_errors=False, limit=None) -> list[str]:
-    """Seed EINs that have not been fetched yet, oldest tag first."""
+    """EINs from the seed or the universe that have not been fetched yet."""
     status = "o.fetch_status IS NULL"
     if retry_errors:
         status += " OR o.fetch_status = 'error'"
     sql = (
-        "SELECT s.ein FROM seed s LEFT JOIN orgs o ON o.ein = s.ein "
-        f"WHERE ({status})"
+        "SELECT t.ein FROM (SELECT ein FROM seed UNION SELECT ein FROM universe) t "
+        f"LEFT JOIN orgs o ON o.ein = t.ein WHERE ({status})"
     )
     params: list = []
     if category:
-        sql += " AND s.category = ?"
+        sql += " AND t.ein IN (SELECT ein FROM seed WHERE category = ?)"
         params.append(category)
-    sql += " ORDER BY s.ein"
+    sql += " ORDER BY t.ein"
     if limit:
         sql += " LIMIT ?"
         params.append(limit)
     return [row["ein"] for row in conn.execute(sql, params)]
+
+
+def oldest_fetched(conn, limit) -> list[str]:
+    """Active organizations whose record is the most out of date."""
+    rows = conn.execute(
+        "SELECT ein FROM orgs WHERE fetch_status = 'ok' AND COALESCE(active, 1) = 1 "
+        "ORDER BY fetched_at LIMIT ?", (limit,))
+    return [r["ein"] for r in rows]
 
 
 def save_org(conn, ein, org, filings, status) -> None:
@@ -302,10 +372,11 @@ def save_org(conn, ein, org, filings, status) -> None:
             (ein, status, now()),
         )
         return
-    values = [org.get(c) for c in ORG_COLUMNS] + [status, now()]
+    values = [org.get(c) for c in ORG_COLUMNS] + [status, now(), ein]
     conn.execute(
-        f"INSERT OR REPLACE INTO orgs ({', '.join(ORG_COLUMNS)}, fetch_status, fetched_at) "
-        f"VALUES ({', '.join('?' * (len(ORG_COLUMNS) + 2))})",
+        f"INSERT OR REPLACE INTO orgs ({', '.join(ORG_COLUMNS)}, fetch_status, fetched_at, active) "
+        f"VALUES ({', '.join('?' * (len(ORG_COLUMNS) + 2))}, "
+        f"COALESCE((SELECT active FROM orgs WHERE ein = ?), 1))",
         values,
     )
     conn.execute("DELETE FROM filings WHERE ein = ?", (ein,))
@@ -350,26 +421,38 @@ def save_scores(conn, results: dict[str, dict]) -> None:
     conn.commit()
 
 
-def categories_by_ein(conn) -> dict[str, str]:
-    return {r["ein"]: r["category"] for r in conn.execute("SELECT ein, category FROM seed")}
+def causes_by_ein(conn) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT o.ein, s.category, COALESCE(o.ntee_code, u.ntee_code) AS ntee FROM orgs o "
+        "LEFT JOIN seed s ON s.ein = o.ein LEFT JOIN universe u ON u.ein = o.ein")
+    return {r["ein"]: cause_for(r["category"], r["ntee"])[0] for r in rows}
 
 
 def ranking_rows(conn) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT s.ein, COALESCE(o.name, s.name) AS name, s.category, s.subcategory,
-               s.mission, s.website, o.city, o.state, o.ntee_code,
-               o.subsection_code, sc.score, sc.confidence, sc.components, sc.latest_year,
+        SELECT sc.ein, COALESCE(o.name, s.name, u.name) AS name,
+               s.category AS seed_category, s.subcategory, s.mission, s.website,
+               COALESCE(o.city, u.city) AS city, COALESCE(o.state, u.state) AS state,
+               COALESCE(o.ntee_code, u.ntee_code) AS ntee_code, o.subsection_code,
+               COALESCE(o.active, 1) AS active, u.ruling, u.income_amt,
+               sc.score, sc.confidence, sc.components, sc.latest_year,
                sc.latest_revenue, sc.years_on_file, sc.size_band,
                sc.cause_rank, sc.cause_total, sc.cause_pct, sc.confidence_factors
         FROM scores sc
-        JOIN seed s ON s.ein = sc.ein
+        LEFT JOIN seed s ON s.ein = sc.ein
         LEFT JOIN orgs o ON o.ein = sc.ein
+        LEFT JOIN universe u ON u.ein = sc.ein
         WHERE sc.score IS NOT NULL
         ORDER BY sc.score DESC, sc.confidence DESC
         """
     )
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        row = dict(r)
+        row["category"], row["cause_source"] = cause_for(row["seed_category"], row["ntee_code"])
+        out.append(row)
+    return out
 
 
 def scores_stamp(conn) -> str:
@@ -387,4 +470,6 @@ def counts(conn) -> dict:
         "errors": one("SELECT COUNT(*) FROM orgs WHERE fetch_status = 'error'"),
         "filings": one("SELECT COUNT(*) FROM filings"),
         "scored": one("SELECT COUNT(*) FROM scores WHERE score IS NOT NULL"),
+        "universe": one("SELECT COUNT(*) FROM universe"),
+        "inactive": one("SELECT COUNT(*) FROM orgs WHERE active = 0"),
     }

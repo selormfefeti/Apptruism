@@ -116,3 +116,51 @@ def test_ensure_database_retries_when_local_db_is_empty(tmp_path):
     # Stale, but the download fails, so the old file stays in use.
     assert db.ensure_database(full, url=bad, max_age_days=35, check_remote=False) == "present"
     assert full.exists()
+
+
+def test_ntee_maps_to_causes():
+    import db
+    assert db.ntee_cause("P20") == "Human Services"
+    assert db.ntee_cause("W30") == "Military and Veterans Organization"
+    assert db.ntee_cause("W20") == "Other"
+    assert db.ntee_cause("") is None
+    assert db.cause_for("Animal Rights", "P20") == ("Animal Rights", "2019 tag")
+    assert db.cause_for("Uncategorized", "B25") == ("Educational Institutions and Related Activities", "NTEE")
+    assert db.cause_for(None, None) == ("Uncategorized", "none")
+
+
+def _bmf_row(ein, subsection="03", filing_req="01", income="120000", ntee="P20", name="X"):
+    return {"EIN": ein, "NAME": name, "CITY": "C", "STATE": "NJ", "ZIP": "07000", "SUBSECTION": subsection,
+            "FILING_REQ_CD": filing_req, "INCOME_AMT": income, "REVENUE_AMT": income, "ASSET_AMT": "0",
+            "RULING": "202301", "NTEE_CD": ntee}
+
+
+def test_universe_target_filter():
+    import universe
+    assert universe.is_target(_bmf_row("1"))
+    assert not universe.is_target(_bmf_row("2", subsection="06"))
+    assert not universe.is_target(_bmf_row("3", filing_req="02"))
+    assert not universe.is_target(_bmf_row("4", income="20000"))
+    assert not universe.is_target(_bmf_row("5", income=""))
+
+
+def test_universe_refresh_feeds_fetch_and_marks_absent_orgs_inactive(tmp_path):
+    import db, universe
+    conn = db.connect(tmp_path / "u.db")
+    # two orgs already fetched: one still in the master file, one gone
+    db.save_org(conn, "000000001", {"ein": "000000001", "name": "Stays"}, [], "ok")
+    db.save_org(conn, "000000002", {"ein": "000000002", "name": "Gone"}, [], "ok")
+    rows = [_bmf_row("000000001"), _bmf_row("000000003", name="New target"),
+            _bmf_row("000000004", filing_req="02")]  # postcard filer: present but not a target
+    counts = universe.refresh(conn, rows, stamp="2026-09-08T00:00:00+00:00")
+    assert counts["in_target"] == 2
+    assert counts["fetched_now_inactive"] == 1
+    assert db.pending_eins(conn) == ["000000003"]
+    active = {r["ein"]: r["active"] for r in conn.execute("SELECT ein, active FROM orgs")}
+    assert active == {"000000001": 1, "000000002": 0}
+    # a later refresh without org 3 drops it from the universe
+    universe.refresh(conn, [_bmf_row("000000001")], stamp="2026-10-08T00:00:00+00:00")
+    assert conn.execute("SELECT COUNT(*) FROM universe").fetchone()[0] == 1
+    # refetching an inactive org keeps it inactive
+    db.save_org(conn, "000000002", {"ein": "000000002", "name": "Gone"}, [], "ok")
+    assert conn.execute("SELECT active FROM orgs WHERE ein='000000002'").fetchone()[0] == 0

@@ -6,6 +6,10 @@ Pull organizations and filings from ProPublica into the local database.
     python fetch.py --category "Animal Rights"
     python fetch.py --ein 454824300          one org, handy for spot checks
     python fetch.py --retry-errors           revisit orgs that errored
+    python fetch.py --refresh-oldest 40000   re-pull the most out-of-date records
+
+Unfetched EINs come from the seed and from the universe table that
+universe.py fills from the IRS master file.
 
 Resumable: every EIN gets a status of ok, not_found or error in orgs, and a
 plain run only visits EINs with no status yet. Run score.py afterwards.
@@ -48,6 +52,8 @@ def main(argv=None) -> None:
     parser.add_argument("--category")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--retry-errors", action="store_true")
+    parser.add_argument("--refresh-oldest", type=int, metavar="N",
+                        help="re-fetch the N active organizations with the oldest records")
     parser.add_argument("--db", default=db.DB_PATH)
     args = parser.parse_args(argv)
 
@@ -57,6 +63,8 @@ def main(argv=None) -> None:
 
     if args.ein:
         eins = [args.ein.replace("-", "").zfill(9)]
+    elif args.refresh_oldest:
+        eins = db.oldest_fetched(conn, args.refresh_oldest)
     else:
         eins = db.pending_eins(conn, args.category, args.retry_errors, args.limit)
     if not eins:

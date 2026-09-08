@@ -1,14 +1,22 @@
 name: Refresh data
 
-# Rebuilds apptruism.db from the ProPublica API and publishes it gzipped as
-# the asset of a release tagged "data". The app downloads that file on
-# startup when it has no local database, which is how the hosted copy gets
-# its data without a 70 MB binary landing in the repo every month.
+# Monthly: start from the published database, refresh the universe from the
+# IRS master file, fetch organizations that are new to the target set, bring
+# the most out-of-date records up to date, rescore, and publish the gzipped
+# database as the asset of the release tagged "data". The app downloads that
+# file when it starts and checks for a newer one about once an hour.
 
 on:
   schedule:
     - cron: "0 6 1 * *"   # 06:00 UTC on the 1st of each month
   workflow_dispatch:
+    inputs:
+      new_limit:
+        description: "Cap on newly listed organizations to fetch"
+        default: "5000"
+      refresh_limit:
+        description: "Cap on existing records to re-fetch"
+        default: "40000"
   push:
     paths:
       - .github/workflows/refresh-data.yml
@@ -19,25 +27,37 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Fetch every seed organization
-        run: python fetch.py --load-seed
+      - name: Start from the published database, if there is one
+        run: |
+          if curl -sSLf -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz; then
+            gunzip -f apptruism.db.gz && ls -la apptruism.db
+          else
+            echo "no published database yet; starting empty"
+          fi
+      - name: Load the 2019 seed
+        run: python fetch.py --load-seed --limit 1
+      - name: Refresh the universe from the IRS master file
+        run: python universe.py
+      - name: Fetch organizations new to the target set
+        run: python fetch.py --limit ${{ github.event.inputs.new_limit || 5000 }}
+      - name: Bring the most out-of-date records up to date
+        run: python fetch.py --refresh-oldest ${{ github.event.inputs.refresh_limit || 40000 }}
       - name: Score
         run: python score.py
       - name: Compress
-        run: gzip -9 -k apptruism.db && ls -la apptruism.db.gz
+        run: gzip -9 -f apptruism.db && ls -la apptruism.db.gz
       - name: Publish as the "data" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view data >/dev/null 2>&1 \
-            || gh release create data --title "Latest data" \
-                 --notes "Rebuilt automatically by the refresh-data workflow. Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."
+            || gh release create data --title "Latest data" --notes "Built by the refresh-data workflow."
           gh release upload data apptruism.db.gz --clobber
           gh release edit data --notes "Rebuilt $(date -u +%Y-%m-%d) by the refresh-data workflow. Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."

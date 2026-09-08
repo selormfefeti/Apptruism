@@ -167,11 +167,13 @@ with st.sidebar:
                                "associations, booster clubs, fraternal orders and the like.")
     hide_stale = st.checkbox(f"Hide filers with nothing since {CURRENT_YEAR - 3}", value=True,
                              help="An organization with no return in three years is probably inactive.")
+    hide_gone = st.checkbox("Hide organizations no longer on the IRS list", value=True,
+                            help="Revoked, merged or dissolved since they were tagged in 2019.")
     c = counts(STAMP)
     st.divider()
     st.caption(
-        f"{c['scored']:,} scored of {c['fetched']:,} fetched, "
-        f"from a seed of {c['seed']:,} organizations tagged in 2019. "
+        f"{c['scored']:,} scored of {c['fetched']:,} fetched, from {c['seed']:,} organizations "
+        f"tagged in 2019 and an IRS list of {c['universe']:,} that could be scored. "
         f"{c['filings']:,} filings on file."
     )
     st.caption("Data: ProPublica Nonprofit Explorer, from IRS Form 990 e-files.")
@@ -192,6 +194,8 @@ if only_c3:
     view = view[view["subsection_code"] == 3]
 if hide_stale:
     view = view[view["latest_year"] >= CURRENT_YEAR - 3]
+if hide_gone:
+    view = view[view["active"] == 1]
 view = view.sort_values(["score", "confidence"], ascending=False).reset_index(drop=True)
 view.insert(0, "rank", range(1, len(view) + 1))
 

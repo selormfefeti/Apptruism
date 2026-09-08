@@ -282,7 +282,7 @@ def main() -> None:
         if result:
             results[ein] = result
     ranks = cause_percentiles({e: r["score"] for e, r in results.items()},
-                              db.categories_by_ein(conn))
+                              db.causes_by_ein(conn))
     for ein, (rank, total, pct) in ranks.items():
         results[ein].update(cause_rank=rank, cause_total=total, cause_pct=pct)
     db.save_scores(conn, results)
