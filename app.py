@@ -97,8 +97,8 @@ if db.ensure_database() == "downloaded":
 
 
 @st.cache_data
-def ranking(stamp: str) -> pd.DataFrame:
-    """The stamp is only a cache key: a rescore changes it and refreshes the page."""
+def ranking(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> pd.DataFrame:
+    """Both arguments are only cache keys: a rescore or a schema change refreshes the page."""
     df = pd.DataFrame(db.ranking_rows(database()))
     if df.empty:
         return df
@@ -111,7 +111,7 @@ def ranking(stamp: str) -> pd.DataFrame:
 
 
 @st.cache_data
-def counts(stamp: str) -> dict:
+def counts(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> dict:
     return db.counts(database())
 
 
@@ -172,9 +172,9 @@ with st.sidebar:
     c = counts(STAMP)
     st.divider()
     st.caption(
-        f"{c['scored']:,} scored of {c['fetched']:,} fetched, from {c['seed']:,} organizations "
-        f"tagged in 2019 and an IRS list of {c['universe']:,} that could be scored. "
-        f"{c['filings']:,} filings on file."
+        f"{c.get('scored', 0):,} scored of {c.get('fetched', 0):,} fetched, from {c.get('seed', 0):,} "
+        f"organizations tagged in 2019 and an IRS list of {c.get('universe', 0):,} that could be scored. "
+        f"{c.get('filings', 0):,} filings on file."
     )
     st.caption("Data: ProPublica Nonprofit Explorer, from IRS Form 990 e-files.")
 
