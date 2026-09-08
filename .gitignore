@@ -8,3 +8,4 @@ fetch.log
 review.xlsx
 *.db-wal
 *.db-shm
+experiments/*.xlsx
