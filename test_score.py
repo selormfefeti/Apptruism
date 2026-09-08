@@ -128,6 +128,10 @@ def test_ntee_maps_to_causes():
     assert db.cause_for("Educational Institutions and Related Activities", "A65") == ("Arts, Culture & Humanities", "NTEE")
     assert db.cause_for("Animal Rights", None) == ("Animals", "2019 tag")
     assert db.cause_for("Other", None) == ("Uncategorized", "none")
+    # veterans' posts are coded all over NTEE; the name wins for that cause
+    assert db.cause_for(None, "B90", "Veterans Of Foreign Wars Post 123") == ("Military & Veterans", "name")
+    assert db.cause_for(None, "P20", "American Legion Auxiliary Unit 5") == ("Military & Veterans", "name")
+    assert db.cause_for(None, "P20", "Veterinary Fund") == ("Human Services", "NTEE")
     assert db.cause_for("Uncategorized", None) == ("Uncategorized", "none")
 
 

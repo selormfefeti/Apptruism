@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import gzip
 import json
+import re
 import shutil
 import sqlite3
 import sys
@@ -120,6 +121,13 @@ SEED_TO_CAUSE = {
 }
 
 
+# NTEE puts about half of veterans' posts under education, recreation or
+# human services. The name is a better signal for this one cause.
+VETERANS_IN_NAME = re.compile(
+    r"\bveterans?\b|\bvfw\b|veterans of foreign wars|american legion|disabled american|"
+    r"wounded warriors?|gold star|\bvets\b", re.I)
+
+
 def ntee_cause(code) -> str | None:
     code = (code or "").strip().upper()
     if not code:
@@ -127,8 +135,10 @@ def ntee_cause(code) -> str | None:
     return NTEE_CAUSE_EXACT.get(code[:3]) or NTEE_CAUSE.get(code[0])
 
 
-def cause_for(seed_category, ntee_code) -> tuple[str, str]:
+def cause_for(seed_category, ntee_code, name=None) -> tuple[str, str]:
     """(cause, where it came from): the NTEE code when there is one, else the 2019 hand tag."""
+    if name and VETERANS_IN_NAME.search(name):
+        return "Military & Veterans", "name"
     mapped = ntee_cause(ntee_code)
     if mapped:
         return mapped, "NTEE"
@@ -450,9 +460,10 @@ def save_scores(conn, results: dict[str, dict]) -> None:
 
 def causes_by_ein(conn) -> dict[str, str]:
     rows = conn.execute(
-        "SELECT o.ein, s.category, COALESCE(o.ntee_code, u.ntee_code) AS ntee FROM orgs o "
+        "SELECT o.ein, s.category, COALESCE(o.ntee_code, u.ntee_code) AS ntee, "
+        "COALESCE(o.name, s.name, u.name) AS name FROM orgs o "
         "LEFT JOIN seed s ON s.ein = o.ein LEFT JOIN universe u ON u.ein = o.ein")
-    return {r["ein"]: cause_for(r["category"], r["ntee"])[0] for r in rows}
+    return {r["ein"]: cause_for(r["category"], r["ntee"], r["name"])[0] for r in rows}
 
 
 def ranking_rows(conn) -> list[dict]:
@@ -477,7 +488,7 @@ def ranking_rows(conn) -> list[dict]:
     out = []
     for r in rows:
         row = dict(r)
-        row["category"], row["cause_source"] = cause_for(row["seed_category"], row["ntee_code"])
+        row["category"], row["cause_source"] = cause_for(row["seed_category"], row["ntee_code"], row["name"])
         out.append(row)
     return out
 

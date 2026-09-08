@@ -228,7 +228,9 @@ with left:
     st.markdown(f"### {org['name']}")
     place = ", ".join(p for p in (org["city"], org["state"]) if p)
     subsection = f"501(c)({int(org['subsection_code'])})" if pd.notna(org["subsection_code"]) else "subsection n/a"
-    if org["cause_source"] == "NTEE":
+    if org["cause_source"] == "name":
+        via = f"from the name; NTEE {org['ntee_code'] or 'n/a'}"
+    elif org["cause_source"] == "NTEE":
         via = f"NTEE {org['ntee_code']}"
     elif org["cause_source"] == "2019 tag":
         via = "no NTEE code, cause from the 2019 hand tag"
