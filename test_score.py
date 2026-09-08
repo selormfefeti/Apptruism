@@ -121,12 +121,14 @@ def test_ensure_database_retries_when_local_db_is_empty(tmp_path):
 def test_ntee_maps_to_causes():
     import db
     assert db.ntee_cause("P20") == "Human Services"
-    assert db.ntee_cause("W30") == "Military and Veterans Organization"
-    assert db.ntee_cause("W20") == "Other"
+    assert db.ntee_cause("W30") == "Military & Veterans"
+    assert db.ntee_cause("W20") == "Public & Societal Benefit"
     assert db.ntee_cause("") is None
-    assert db.cause_for("Animal Rights", "P20") == ("Animal Rights", "2019 tag")
-    assert db.cause_for("Uncategorized", "B25") == ("Educational Institutions and Related Activities", "NTEE")
-    assert db.cause_for(None, None) == ("Uncategorized", "none")
+    # NTEE wins when present; the 2019 tag is only a fallback
+    assert db.cause_for("Educational Institutions and Related Activities", "A65") == ("Arts, Culture & Humanities", "NTEE")
+    assert db.cause_for("Animal Rights", None) == ("Animals", "2019 tag")
+    assert db.cause_for("Other", None) == ("Uncategorized", "none")
+    assert db.cause_for("Uncategorized", None) == ("Uncategorized", "none")
 
 
 def _bmf_row(ein, subsection="03", filing_req="01", income="120000", ntee="P20", name="X"):

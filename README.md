@@ -29,8 +29,11 @@ organizations hand-tagged by cause.
 4. `app.py` is a Streamlit page: filter by cause, state and size, see the
    ranking, click an organization to see its components and money over time.
 
-Causes come from the 2019 hand tags where they exist and from the NTEE code
-otherwise; the page says which.
+Causes are the NTEE major groups, from the code the IRS assigns each
+organization. The 2019 hand tags were keyword-driven and put more than half
+the seed in "Education" (museums, hockey clubs and hospitals included), so
+they are kept only as a secondary field and as a fallback for the 14% of
+organizations without a code. The page says which source it used.
 
 ## Run it
 

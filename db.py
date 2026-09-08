@@ -67,31 +67,56 @@ CATEGORIES = [
 UNCATEGORIZED = "Uncategorized"
 _CANON = {c.lower(): c for c in CATEGORIES}
 
-# Organizations without a 2019 hand tag get a cause from their NTEE code,
-# the IRS classification the master file and ProPublica both carry. Letters
-# are the NTEE major group; a few three-character codes override the letter.
+# Causes come from the NTEE code, the IRS classification the master file and
+# ProPublica both carry, using the NTEE major groups with a few merged. The
+# 2019 hand tags were keyword-driven and put 55% of the seed in "Education",
+# so they are kept only as a secondary field for organizations without a code.
 NTEE_CAUSE = {
-    "A": "Arts, Culture and Humanities",
-    "B": "Educational Institutions and Related Activities",
-    "C": "Environmental",
-    "D": "Animal Rights",
-    "E": "Health Care", "F": "Health Care", "G": "Health Care",
+    "A": "Arts, Culture & Humanities",
+    "B": "Education",
+    "C": "Environment",
+    "D": "Animals",
+    "E": "Health Care",
+    "F": "Mental Health & Crisis Intervention",
+    "G": "Diseases & Disorders",
     "H": "Medical Research",
-    "I": "Human Services", "J": "Human Services", "K": "Human Services",
-    "L": "Human Services", "M": "Human Services",
-    "N": "Recreation, Sports, Leisure, Athletics",
-    "O": "Educational Institutions and Related Activities",
+    "I": "Crime & Legal",
+    "J": "Employment",
+    "K": "Food & Agriculture",
+    "L": "Housing & Shelter",
+    "M": "Public Safety & Disaster Relief",
+    "N": "Recreation & Sports",
+    "O": "Youth Development",
     "P": "Human Services",
     "Q": "International",
-    "R": "Human Rights",
-    "S": "Trade Development",
-    "T": "Philanthropy and Grantmaking",
-    "U": "Other", "V": "Other", "W": "Other", "Y": "Other",
-    "X": "Religious Organization",
+    "R": "Civil Rights & Advocacy",
+    "S": "Community & Economic Development",
+    "T": "Philanthropy & Grantmaking",
+    "U": "Science & Social Science",
+    "V": "Science & Social Science",
+    "W": "Public & Societal Benefit",
+    "X": "Religion",
+    "Y": "Mutual & Membership Benefit",
 }
 NTEE_CAUSE_EXACT = {
-    "W30": "Military and Veterans Organization",
-    "J40": "Labor/Workers' Rights",
+    "W30": "Military & Veterans",
+}
+
+# The 2019 hand-tag names, translated onto the NTEE cause names so the
+# fallback does not create a second list of causes.
+SEED_TO_CAUSE = {
+    "Animal Rights": "Animals",
+    "Educational Institutions and Related Activities": "Education",
+    "Environmental": "Environment",
+    "Human Rights": "Civil Rights & Advocacy",
+    "Human Services": "Human Services",
+    "Labor/Workers' Rights": "Employment",
+    "Medical Research": "Medical Research",
+    "Mental Health, Crisis Intervention": "Mental Health & Crisis Intervention",
+    "Military and Veterans Organization": "Military & Veterans",
+    "Recreation, Sports, Leisure, Athletics": "Recreation & Sports",
+    "Religious Organization": "Religion",
+    "Trade Development": "Community & Economic Development",
 }
 
 
@@ -103,13 +128,15 @@ def ntee_cause(code) -> str | None:
 
 
 def cause_for(seed_category, ntee_code) -> tuple[str, str]:
-    """(cause, where it came from): the 2019 hand tag when there is one, else NTEE."""
-    if seed_category and seed_category != UNCATEGORIZED:
-        return seed_category, "2019 tag"
+    """(cause, where it came from): the NTEE code when there is one, else the 2019 hand tag."""
     mapped = ntee_cause(ntee_code)
     if mapped:
         return mapped, "NTEE"
+    translated = SEED_TO_CAUSE.get(seed_category or "")
+    if translated:
+        return translated, "2019 tag"
     return UNCATEGORIZED, "none"
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS seed (

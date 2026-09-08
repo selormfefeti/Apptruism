@@ -9,3 +9,4 @@ review.xlsx
 *.db-wal
 *.db-shm
 experiments/*.xlsx
+cause_check.xlsx

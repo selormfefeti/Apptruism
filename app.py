@@ -20,17 +20,6 @@ import score as scoring
 
 st.set_page_config(page_title="Apptruism", page_icon="🤝", layout="wide")
 
-NTEE_MAJOR = {
-    "A": "Arts, Culture & Humanities", "B": "Education", "C": "Environment",
-    "D": "Animal-Related", "E": "Health Care", "F": "Mental Health & Crisis",
-    "G": "Disease & Disorders", "H": "Medical Research", "I": "Crime & Legal",
-    "J": "Employment", "K": "Food, Agriculture & Nutrition", "L": "Housing & Shelter",
-    "M": "Public Safety & Disaster", "N": "Recreation & Sports", "O": "Youth Development",
-    "P": "Human Services", "Q": "International", "R": "Civil Rights & Advocacy",
-    "S": "Community Improvement", "T": "Philanthropy & Grantmaking",
-    "U": "Science & Technology", "V": "Social Science", "W": "Public & Societal Benefit",
-    "X": "Religion-Related", "Y": "Mutual & Membership Benefit", "Z": "Unknown",
-}
 SIZE_ORDER = ["Under $100k", "$100k to $1M", "$1M to $10M", "Over $10M", "Unknown"]
 
 # Written for a donor, not a developer. Dollar signs are escaped because
@@ -105,8 +94,6 @@ def ranking(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> pd.DataFrame
     parsed = df["components"].map(json.loads)
     for name in scoring.COMPONENTS:
         df[name] = parsed.map(lambda c, n=name: c.get(n, {}).get("value"))
-    df["ntee_group"] = df["ntee_code"].map(
-        lambda c: NTEE_MAJOR.get(str(c)[:1].upper(), "Unknown") if c else "Unknown")
     return df
 
 
@@ -240,10 +227,21 @@ left, right = st.columns([3, 2])
 with left:
     st.markdown(f"### {org['name']}")
     place = ", ".join(p for p in (org["city"], org["state"]) if p)
-    sub = f" · {org['subcategory']}" if org["subcategory"] else ""
     subsection = f"501(c)({int(org['subsection_code'])})" if pd.notna(org["subsection_code"]) else "subsection n/a"
-    st.caption(f"{org['category']}{sub} · {place} · {subsection} · NTEE {org['ntee_code'] or 'n/a'} "
-               f"({org['ntee_group']}) · EIN {org['ein']}")
+    if org["cause_source"] == "NTEE":
+        via = f"NTEE {org['ntee_code']}"
+    elif org["cause_source"] == "2019 tag":
+        via = "no NTEE code, cause from the 2019 hand tag"
+    else:
+        via = "no NTEE code"
+    old_tag = ""
+    if org["seed_category"] and org["seed_category"] != "Uncategorized":
+        old_tag = f" · 2019 tag: {org['seed_category']}"
+        if org["subcategory"]:
+            old_tag += f" / {org['subcategory']}"
+    st.caption(f"{org['category']} ({via}) · {place} · {subsection}{old_tag} · EIN {org['ein']}")
+    if not org["active"]:
+        st.warning("No longer on the IRS list of exempt organizations. Revoked, merged or dissolved.")
     if org["mission"]:
         st.write(org["mission"])
     links = [f"[ProPublica profile]({propublica.ORG_PAGE.format(ein=int(org['ein']))})"]
