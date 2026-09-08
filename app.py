@@ -33,6 +33,56 @@ NTEE_MAJOR = {
 }
 SIZE_ORDER = ["Under $100k", "$100k to $1M", "$1M to $10M", "Over $10M", "Unknown"]
 
+# Written for a donor, not a developer. Dollar signs are escaped because
+# Streamlit's markdown otherwise reads them as maths.
+METHOD_TEXT = r"""
+Every organization here files a Form 990 or 990-EZ with the IRS each year, and
+those returns are public. The score reads a few years of them and asks four
+questions:
+
+- **Is support growing?** How fast contributions have grown, year over year,
+  across the returns on file. This needs at least two years of \$1,000 or more.
+- **Does it live within its means?** Revenue minus expenses, as a share of
+  revenue, taken as the median of the last three years so one unusual year
+  doesn't decide it. A small surplus scores best. Large deficits score low,
+  and so do very large surpluses, since money piling up isn't being spent on
+  the mission.
+- **Could it survive a bad year?** How many months of expenses its net assets
+  would cover. Six to twenty-four months scores best.
+- **How much goes to the people running it?** Officer and director pay as a
+  share of expenses, from the full Form 990 only. The shorter 990-EZ has no
+  such line. A reported zero at an organization spending \$500,000 or more is
+  treated as unknown rather than as perfect, because that line is often left
+  blank.
+
+Each answer becomes 0 to 100 points, and the score is their weighted average.
+The full 990 and the 990-EZ use different weights, shown below, so filing the
+shorter form is not itself a penalty.
+
+**Confidence** says how far to trust the score. It multiplies five factors,
+each between 0 and 1: how much of the formula could be computed, how many
+years of data there are, how recent the newest return is, whether the latest
+year looks typical, and whether the numbers reconcile from one year to the
+next. A long, steady, consistent history scores near 1.0. A single year of
+data can't get above 0.4, however good it looks.
+
+**In its cause** ranks each organization only against others working on the
+same cause, because a food pantry and a university shouldn't be compared on
+one number.
+"""
+
+METHOD_LIMITS = r"""
+**What this can't tell you.** The score measures financial health as the
+filings report it, not impact. It has no way to see whether a program works.
+Organizations that spend down reserves by design, such as grantmakers, can
+look worse than they are. Organizations under \$50,000 file a postcard with
+no financials and don't appear. Data comes from
+[ProPublica's Nonprofit Explorer](https://projects.propublica.org/nonprofits/),
+built from IRS e-filings, and is refreshed monthly. The scoring code is
+[open source](https://github.com/selormfefeti/Apptruism); changes to it are
+argued with evidence, in public.
+"""
+
 
 @st.cache_resource
 def database(schema_version: int = db.SCHEMA_VERSION):
@@ -260,7 +310,7 @@ with right:
 
 # ---------------------------------------------------------------- method
 with st.expander("How the score works"):
-    st.markdown(scoring.__doc__.split("    python score.py")[0])
+    st.markdown(METHOD_TEXT)
     st.dataframe(
         pd.DataFrame([
             {"Component": scoring.LABELS[k][0],
@@ -270,3 +320,4 @@ with st.expander("How the score works"):
         ]),
         hide_index=True,
     )
+    st.markdown(METHOD_LIMITS)
