@@ -33,8 +33,13 @@ SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 # app, downloads it from here instead of spending an hour on the API.
 DATA_URL = "https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz"
 
+RELEASE_API = "https://api.github.com/repos/selormfefeti/Apptruism/releases/tags/data"
+
 # Why the last ensure_database() could not download, for the empty-state page.
 LAST_DOWNLOAD_ERROR = None
+
+# The release is checked for a newer file at most once an hour per process.
+_REMOTE_CHECK = {"at": 0.0, "newer": False}
 
 # The categories the 2019 spreadsheets were tagged with, spelled the way the
 # Categories sheet spells them. Rows were tagged by hand so the casing drifts.
@@ -110,7 +115,8 @@ CREATE TABLE IF NOT EXISTS scores (
     computed_at TEXT,
     cause_rank INTEGER,
     cause_total INTEGER,
-    cause_pct REAL
+    cause_pct REAL,
+    confidence_factors TEXT
 );
 """
 
@@ -120,6 +126,7 @@ MIGRATIONS = [
     ("scores", "cause_rank", "INTEGER"),
     ("scores", "cause_total", "INTEGER"),
     ("scores", "cause_pct", "REAL"),
+    ("scores", "confidence_factors", "TEXT"),
 ]
 
 FILING_COLUMNS = [
@@ -138,18 +145,19 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35):
+def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35, check_remote=True):
     """
     Make sure a database with scores exists at path, downloading the
-    published one when there is none or when the local one is older than
-    max_age_days. Returns "present" (nothing to do, or download failed but
-    the old file is still usable), "downloaded" (callers holding an open
-    connection should reopen it), or None (no usable database at all).
+    published one when there is none, when the local one is older than
+    max_age_days, or when the release holds a newer file. Returns "present"
+    (nothing to do, or download failed but the old file is still usable),
+    "downloaded" (callers holding an open connection should reopen it), or
+    None (no usable database at all).
     """
     global LAST_DOWNLOAD_ERROR
     path = Path(path)
     have = path.exists() and path.stat().st_size > 0 and _has_scores(path)
-    if have and not _stale(path, max_age_days):
+    if have and not _stale(path, max_age_days) and not (check_remote and _remote_newer(path)):
         return "present"
     if path.exists() and not have:
         path.unlink()  # an empty schema from a start that could not download
@@ -167,6 +175,25 @@ def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35):
         print(f"could not download database: {LAST_DOWNLOAD_ERROR}", file=sys.stderr)
         partial.unlink(missing_ok=True)
         return "present" if have else None
+
+
+def _remote_newer(path) -> bool:
+    """Whether the release asset was updated after the local file was written."""
+    import time
+    if time.monotonic() - _REMOTE_CHECK["at"] < 3600:
+        return _REMOTE_CHECK["newer"]
+    newer = False
+    try:
+        with urllib.request.urlopen(RELEASE_API, timeout=15) as resp:
+            release = json.load(resp)
+        asset = next(a for a in release.get("assets", []) if a["name"] == Path(DATA_URL).name)
+        updated = datetime.fromisoformat(asset["updated_at"].replace("Z", "+00:00"))
+        local = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        newer = updated > local
+    except Exception as exc:  # noqa: BLE001 - a failed check just means "not now"
+        print(f"could not check the release: {exc}", file=sys.stderr)
+    _REMOTE_CHECK.update(at=time.monotonic(), newer=newer)
+    return newer
 
 
 def _stale(path, max_age_days) -> bool:
@@ -297,13 +324,16 @@ def all_filings(conn) -> dict[str, list[dict]]:
 def save_scores(conn, results: dict[str, dict]) -> None:
     stamp = now()
     conn.executemany(
-        "INSERT OR REPLACE INTO scores VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        """INSERT OR REPLACE INTO scores
+           (ein, score, confidence, components, latest_year, latest_revenue, years_on_file,
+            size_band, computed_at, cause_rank, cause_total, cause_pct, confidence_factors)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         [
             (
                 ein, s["score"], s["confidence"], json.dumps(s["components"]),
                 s["latest_year"], s["latest_revenue"], s["years_on_file"],
                 s["size_band"], stamp, s.get("cause_rank"), s.get("cause_total"),
-                s.get("cause_pct"),
+                s.get("cause_pct"), json.dumps(s.get("confidence_factors") or {}),
             )
             for ein, s in results.items()
         ],
@@ -322,7 +352,7 @@ def ranking_rows(conn) -> list[dict]:
                s.mission, s.website, o.city, o.state, o.ntee_code,
                o.subsection_code, sc.score, sc.confidence, sc.components, sc.latest_year,
                sc.latest_revenue, sc.years_on_file, sc.size_band,
-               sc.cause_rank, sc.cause_total, sc.cause_pct
+               sc.cause_rank, sc.cause_total, sc.cause_pct, sc.confidence_factors
         FROM scores sc
         JOIN seed s ON s.ein = sc.ein
         LEFT JOIN orgs o ON o.ein = sc.ein

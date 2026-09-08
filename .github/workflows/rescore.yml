@@ -1,0 +1,42 @@
+name: Rescore
+
+# When the scoring code changes, rescore the already-published data instead
+# of refetching everything. Takes a couple of minutes; the app picks the new
+# file up within the hour.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - score.py
+      - db.py
+      - .github/workflows/rescore.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rescore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Download the published database
+        run: |
+          curl -sSL -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
+          gunzip -f apptruism.db.gz
+      - name: Score
+        run: python score.py
+      - name: Compress
+        run: gzip -9 -f apptruism.db && ls -la apptruism.db.gz
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload data apptruism.db.gz --clobber
+          gh release edit data --notes "Rescored $(date -u +%Y-%m-%d) by the rescore workflow from commit ${GITHUB_SHA::7}. Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."

@@ -1,5 +1,7 @@
 """
-Pressure test for a second version of the score.
+Pressure test for a second version of the score. This was run on 2026-09-08
+against the first score and led to the version now in score.py; kept so the
+comparison can be rerun.
 
 What changes against score.py, each switchable so its effect can be isolated:
 
@@ -34,6 +36,18 @@ import pandas as pd
 
 import db
 import score as v1
+
+# The pieces of the first score that the experiment compares against.
+CURVES = {**v1.CURVES, "fundraising_cost": [(0.00, 100), (0.10, 100), (0.25, 50), (0.50, 0)]}
+
+
+def filing_consistency(filings, current_year) -> float:
+    years = {f["tax_year"] for f in filings if f.get("tax_year")}
+    window = set(range(current_year - 6, current_year - 1))
+    coverage = len(years & window) / len(window)
+    gap = current_year - max(years)
+    rec = {0: 100, 1: 100, 2: 100, 3: 60, 4: 30}.get(gap, 0)
+    return 60 * coverage + 40 * rec / 100
 
 CURRENT_YEAR = 2026
 W990 = {"donor_growth": 0.30, "margin": 0.25, "reserves": 0.25, "officer_comp": 0.20}
@@ -114,7 +128,7 @@ def score_v2(filings, opts) -> dict | None:
         if "fundraising_cost" in weights:
             raw["fundraising_cost"] = v1.share(latest.get("fundraising_expense"), latest.get("contributions"))
     if "filing_consistency" in weights:
-        raw["filing_consistency"] = v1.filing_consistency(fl, CURRENT_YEAR)
+        raw["filing_consistency"] = filing_consistency(fl, CURRENT_YEAR)
 
     points = {}
     for name in weights:
@@ -124,7 +138,7 @@ def score_v2(filings, opts) -> dict | None:
         elif name == "filing_consistency":
             points[name] = value
         else:
-            points[name] = v1.piecewise(value, v1.CURVES[name])
+            points[name] = v1.piecewise(value, CURVES[name])
     available = [(points[k], w) for k, w in weights.items() if points[k] is not None]
     got = sum(w for _, w in available)
     total = sum(weights.values())
@@ -184,7 +198,7 @@ def main() -> None:
     df.index.name = "ein"
     df = df.reset_index()
     comp = df["components"].map(json.loads)
-    df["v1_officer_comp"] = comp.map(lambda c: c["officer_comp"]["value"])
+    df["v1_officer_comp"] = comp.map(lambda c: c.get("officer_comp", {}).get("value"))
 
     # Same population for every comparison: 501(c)(3), a return since 2023.
     pop = df[(df["subsection_code"] == 3) & (df["latest_year"] >= CURRENT_YEAR - 3)].copy()

@@ -4,33 +4,42 @@ organizations, and keep the arithmetic simple enough to explain on a screen.
 
 The 2020 pitch promised a ranking on donor retention, donor growth, pledge
 fulfilment and financials. Form 990 carries no donor counts and no pledges,
-so this first version uses what the public filings actually contain:
+so the score uses what the public filings actually contain:
 
-  donor_growth        compound annual growth of contributions across the
-                      years on file. The closest public proxy for a growing
-                      donor base. Needs two years of at least $1,000 each.
-  margin              (revenue - expenses) / revenue in the latest year.
-                      Small surpluses are healthy. Large deficits and very
-                      large surpluses both score lower.
-  reserves            months of expenses covered by net assets. Six to
-                      twenty-four months is the comfortable band.
-  officer_comp        officer and director compensation as a share of
-                      expenses. Form 990 only; the EZ has no such line.
-  fundraising_cost    professional fundraising fees as a share of
-                      contributions. Form 990 only, and narrow: it misses
-                      in-house fundraising staff.
-  filing_consistency  how many of the last five fileable years have a
-                      return on record, and how recent the newest one is.
+  donor_growth   compound annual growth of contributions across the years
+                 on file. The closest public proxy for a growing donor base.
+                 Needs two years of at least $1,000 each.
+  margin         (revenue - expenses) / revenue, the median of the last three
+                 years so one unusual year does not decide it. Small surpluses
+                 are healthy; large deficits and very large surpluses both
+                 score lower.
+  reserves       months of expenses covered by net assets. Six to twenty-four
+                 months is the comfortable band.
+  officer_comp   officer and director compensation as a share of expenses.
+                 Form 990 only; the EZ has no such line. A reported zero at
+                 an organization spending $500k or more is treated as
+                 unknown rather than as perfect.
+
+The full 990 and the 990-EZ each have their own weights summing to one, so
+filing the short form is not itself a penalty. Each component maps to
+0-100 through a piecewise-linear curve, and the score is the weighted mean
+of whichever components are available.
+
+Confidence says how far to trust that number. It is the product of five
+factors between 0 and 1:
+
+  coverage        share of the formula's weight that could be computed
+  depth           years of data: 0.4 for one, rising to 1.0 at five
+  recency         1.0 while the newest return is three years old or less,
+                  since returns lag the tax year; then 0.7, 0.4, 0.2
+  stability       whether the latest margin is typical of the last three
+                  years; can cost at most 30%
+  reconciliation  whether revenue minus expenses matches the change in net
+                  assets year to year; can cost at most 30%
 
 A food pantry and a university should not be compared on one number, so
 every organization also gets a rank and percentile among the others tagged
-with the same cause. The percentile is the share of peers it scores at or
-above.
-
-Each component maps to 0-100 through a piecewise-linear curve. The score is
-the weighted mean of whichever components are available, and confidence is
-the share of total weight that was available. A 990-EZ filer with two years
-of data is visibly less certain than a 990 filer with five.
+with the same cause.
 
     python score.py            recompute the scores table for every org
 """
@@ -41,13 +50,11 @@ from datetime import date
 
 import db
 
+COMPONENTS = ["donor_growth", "margin", "reserves", "officer_comp"]
+
 WEIGHTS = {
-    "donor_growth": 0.25,
-    "filing_consistency": 0.20,
-    "margin": 0.15,
-    "reserves": 0.15,
-    "officer_comp": 0.15,
-    "fundraising_cost": 0.10,
+    "990": {"donor_growth": 0.30, "margin": 0.25, "reserves": 0.25, "officer_comp": 0.20},
+    "990EZ": {"donor_growth": 0.35, "margin": 0.30, "reserves": 0.35},
 }
 
 # (raw value, score) knots. Outside the first and last knot the score is flat.
@@ -57,19 +64,26 @@ CURVES = {
                (0.30, 80), (0.60, 50)],
     "reserves": [(0, 0), (3, 70), (6, 100), (24, 100), (48, 60), (96, 30)],
     "officer_comp": [(0.00, 100), (0.05, 100), (0.15, 50), (0.30, 0)],
-    "fundraising_cost": [(0.00, 100), (0.10, 100), (0.25, 50), (0.50, 0)],
 }
 
 LABELS = {
     "donor_growth": ("Donor growth", "pct"),
-    "filing_consistency": ("Filing consistency", "score"),
     "margin": ("Operating margin", "pct"),
     "reserves": ("Reserves", "months"),
     "officer_comp": ("Officer pay share", "pct"),
-    "fundraising_cost": ("Fundraising cost", "pct"),
+}
+
+FACTOR_LABELS = {
+    "coverage": "Coverage of the formula",
+    "depth": "Years of data",
+    "recency": "Age of newest return",
+    "stability": "Latest year typical",
+    "reconciliation": "Numbers add up",
 }
 
 MIN_CONTRIBUTIONS = 1_000
+ZERO_PAY_SUSPECT_EXPENSES = 500_000
+MARGIN_YEARS = 3
 SCORED_FORMS = ("990", "990EZ")
 
 
@@ -90,6 +104,15 @@ def share(part, whole):
     return max(part, 0) / whole
 
 
+def one_per_year(filings) -> list[dict]:
+    """Usable filings, one per tax year (the latest period wins), oldest first."""
+    by_year: dict[int, dict] = {}
+    for f in sorted(filings, key=lambda f: f["tax_period"]):
+        if f.get("form") in SCORED_FORMS and f.get("tax_year"):
+            by_year[f["tax_year"]] = f
+    return [by_year[y] for y in sorted(by_year)]
+
+
 def donor_growth(filings) -> float | None:
     by_year: dict[int, float] = {}
     for f in filings:
@@ -105,11 +128,20 @@ def donor_growth(filings) -> float | None:
     return (by_year[last] / by_year[first]) ** (1 / span) - 1
 
 
-def margin(latest) -> float | None:
-    revenue, expenses = latest.get("revenue"), latest.get("expenses")
+def margin(filing) -> float | None:
+    revenue, expenses = filing.get("revenue"), filing.get("expenses")
     if not revenue or revenue <= 0 or expenses is None:
         return None
     return (revenue - expenses) / revenue
+
+
+def recent_margins(filings) -> list[float]:
+    return [m for m in (margin(f) for f in filings[-MARGIN_YEARS:]) if m is not None]
+
+
+def median_margin(filings) -> float | None:
+    ms = sorted(recent_margins(filings))
+    return ms[len(ms) // 2] if ms else None
 
 
 def reserve_months(latest) -> float | None:
@@ -119,17 +151,50 @@ def reserve_months(latest) -> float | None:
     return max(net_assets, 0) / (expenses / 12)
 
 
-def filing_consistency(filings, current_year) -> float:
+def officer_pay_share(latest) -> float | None:
+    value = share(latest.get("officer_comp"), latest.get("expenses"))
+    if value == 0 and (latest.get("expenses") or 0) >= ZERO_PAY_SUSPECT_EXPENSES:
+        return None  # nobody runs a $500k organization for free; the line was left blank
+    return value
+
+
+def stability(filings) -> float:
+    """1.0 when the latest margin sits within five points of the recent average."""
+    ms = recent_margins(filings)
+    latest = margin(filings[-1])
+    if latest is None or len(ms) < 2:
+        return 0.8
+    return piecewise(abs(latest - sum(ms) / len(ms)),
+                     [(0.05, 1.0), (0.15, 0.8), (0.30, 0.6), (0.50, 0.4)])
+
+
+def reconciliation(filings) -> float:
     """
-    Filings lag the tax year by a year or more, so the window is the five
-    years ending two years ago. Coverage is worth 60 points, recency 40.
+    Revenue minus expenses should roughly equal the change in net assets
+    from one year to the next. Investment gains break this for endowed
+    organizations, so the factor runs from 1.0 down to only 0.7.
     """
-    years = {f["tax_year"] for f in filings if f.get("tax_year")}
-    window = set(range(current_year - 6, current_year - 1))
-    coverage = len(years & window) / len(window)
-    gap = current_year - max(years)
-    recency = {0: 100, 1: 100, 2: 100, 3: 60, 4: 30}.get(gap, 0)
-    return 60 * coverage + 40 * recency / 100
+    checks = misses = 0
+    for prev, cur in zip(filings, filings[1:]):
+        if cur["tax_year"] != prev["tax_year"] + 1:
+            continue
+        if None in (prev.get("net_assets"), cur.get("net_assets"), cur.get("revenue"), cur.get("expenses")):
+            continue
+        expected = cur["revenue"] - cur["expenses"]
+        actual = cur["net_assets"] - prev["net_assets"]
+        tolerance = max(0.25 * abs(cur["expenses"]), 25_000)
+        checks += 1
+        if abs(expected - actual) > tolerance:
+            misses += 1
+    return 1.0 if not checks else 1.0 - 0.3 * misses / checks
+
+
+def depth(years: int) -> float:
+    return piecewise(years, [(1, 0.4), (2, 0.6), (3, 0.8), (5, 1.0)])
+
+
+def recency(gap_years: int) -> float:
+    return piecewise(gap_years, [(3, 1.0), (4, 0.7), (5, 0.4), (6, 0.2)])
 
 
 def size_band(revenue) -> str:
@@ -147,46 +212,46 @@ def size_band(revenue) -> str:
 def score(filings, current_year=None) -> dict | None:
     """Score one organization from its list of filing dicts. None if no usable filing."""
     current_year = current_year or date.today().year
-    usable = sorted(
-        (f for f in filings if f.get("form") in SCORED_FORMS and f.get("tax_year")),
-        key=lambda f: f["tax_period"],
-    )
+    usable = one_per_year(filings)
     if not usable:
         return None
     latest = usable[-1]
-    is_990 = latest["form"] == "990"
+    weights = WEIGHTS[latest["form"]]
 
     raw = {
         "donor_growth": donor_growth(usable),
-        "filing_consistency": filing_consistency(usable, current_year),
-        "margin": margin(latest),
+        "margin": median_margin(usable),
         "reserves": reserve_months(latest),
-        "officer_comp": share(latest.get("officer_comp"), latest.get("expenses")) if is_990 else None,
-        "fundraising_cost": share(latest.get("fundraising_expense"), latest.get("contributions")) if is_990 else None,
+        "officer_comp": officer_pay_share(latest) if latest["form"] == "990" else None,
     }
-
     components = {}
-    for name, weight in WEIGHTS.items():
+    for name, weight in weights.items():
         value = raw[name]
-        if value is None:
-            points = None
-        elif name == "filing_consistency":
-            points = value
-        else:
-            points = piecewise(value, CURVES[name])
+        points = None if value is None else piecewise(value, CURVES[name])
         components[name] = {"value": value, "score": points, "weight": weight}
 
     available = [(c["score"], c["weight"]) for c in components.values() if c["score"] is not None]
-    total_weight = sum(w for _, w in available)
-    composite = sum(s * w for s, w in available) / total_weight if total_weight else None
+    got = sum(w for _, w in available)
+    composite = sum(s * w for s, w in available) / got if got else None
+
+    factors = {
+        "coverage": round(got / sum(weights.values()), 2),
+        "depth": depth(len(usable)),
+        "recency": recency(current_year - latest["tax_year"]),
+        "stability": round(stability(usable), 2),
+        "reconciliation": round(reconciliation(usable), 2),
+    }
+    confidence = (factors["coverage"] * factors["depth"] * factors["recency"]
+                  * (0.7 + 0.3 * factors["stability"]) * (0.7 + 0.3 * factors["reconciliation"]))
 
     return {
         "score": round(composite, 1) if composite is not None else None,
-        "confidence": round(total_weight, 2),
+        "confidence": round(confidence, 2),
         "components": components,
+        "confidence_factors": factors,
         "latest_year": latest["tax_year"],
         "latest_revenue": latest.get("revenue"),
-        "years_on_file": len({f["tax_year"] for f in usable}),
+        "years_on_file": len(usable),
         "size_band": size_band(latest.get("revenue")),
     }
 

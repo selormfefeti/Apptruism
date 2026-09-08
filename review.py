@@ -29,14 +29,14 @@ def main() -> None:
 
     df = pd.DataFrame(db.ranking_rows(db.connect()))
     parsed = df["components"].map(json.loads)
-    for name in scoring.WEIGHTS:
-        df[scoring.LABELS[name][0]] = parsed.map(lambda c, n=name: c[n]["value"])
+    for name in scoring.COMPONENTS:
+        df[scoring.LABELS[name][0]] = parsed.map(lambda c, n=name: c.get(n, {}).get("value"))
     df = df[df["confidence"] >= args.min_confidence]
     if not args.all:
         df = df[df["subsection_code"] == 3]
 
     cols = ["ein", "name", "category", "subcategory", "state", "subsection_code", "size_band", "latest_year",
-            "latest_revenue", "score", "confidence"] + [scoring.LABELS[n][0] for n in scoring.WEIGHTS]
+            "latest_revenue", "score", "confidence"] + [scoring.LABELS[n][0] for n in scoring.COMPONENTS]
     frames = []
     for cause, group in df.groupby("category"):
         group = group.sort_values("score", ascending=False)

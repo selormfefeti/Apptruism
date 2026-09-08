@@ -52,8 +52,8 @@ def ranking(stamp: str) -> pd.DataFrame:
     if df.empty:
         return df
     parsed = df["components"].map(json.loads)
-    for name in scoring.WEIGHTS:
-        df[name] = parsed.map(lambda c, n=name: c[n]["value"])
+    for name in scoring.COMPONENTS:
+        df[name] = parsed.map(lambda c, n=name: c.get(n, {}).get("value"))
     df["ntee_group"] = df["ntee_code"].map(
         lambda c: NTEE_MAJOR.get(str(c)[:1].upper(), "Unknown") if c else "Unknown")
     return df
@@ -218,11 +218,22 @@ with left:
             "Points": None if comp["score"] is None else round(comp["score"]),
             "Weight": f"{comp['weight'] * 100:.0f}%",
         })
+    st.markdown("**Score**")
     st.dataframe(
         pd.DataFrame(rows), hide_index=True,
         column_config={"Points": st.column_config.ProgressColumn(
             "Points", min_value=0, max_value=100, format="%d")},
     )
+    factors = json.loads(org["confidence_factors"] or "{}")
+    if factors:
+        st.markdown(f"**Confidence {org['confidence']:.2f}**, the product of these factors")
+        st.dataframe(
+            pd.DataFrame([{"Factor": scoring.FACTOR_LABELS.get(k, k), "Value": v}
+                          for k, v in factors.items()]),
+            hide_index=True,
+            column_config={"Value": st.column_config.ProgressColumn(
+                "Value", min_value=0, max_value=1, format="%.2f")},
+        )
 
 with right:
     filings = pd.DataFrame(db.filings_for(database(), org["ein"]))
@@ -250,7 +261,11 @@ with right:
 with st.expander("How the score works"):
     st.markdown(scoring.__doc__.split("    python score.py")[0])
     st.dataframe(
-        pd.DataFrame([{"Component": scoring.LABELS[k][0], "Weight": f"{v * 100:.0f}%"}
-                      for k, v in scoring.WEIGHTS.items()]),
+        pd.DataFrame([
+            {"Component": scoring.LABELS[k][0],
+             **{f"Form {form}": f"{w[k] * 100:.0f}%" if k in w else "not on the form"
+                for form, w in scoring.WEIGHTS.items()}}
+            for k in scoring.COMPONENTS
+        ]),
         hide_index=True,
     )

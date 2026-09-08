@@ -2,11 +2,11 @@ import score
 
 
 def filing(year, form="990", revenue=100_000, expenses=90_000, contributions=80_000,
-           net_assets=50_000, officer_comp=10_000, fundraising_expense=0):
+           net_assets=50_000, officer_comp=10_000):
     return dict(
         tax_period=year * 100 + 12, tax_year=year, form=form, revenue=revenue,
         expenses=expenses, contributions=contributions, net_assets=net_assets,
-        officer_comp=officer_comp, fundraising_expense=fundraising_expense,
+        officer_comp=officer_comp,
     )
 
 
@@ -28,27 +28,50 @@ def test_donor_growth_needs_two_years():
     assert score.donor_growth([]) is None
 
 
-def test_ez_filer_lacks_990_only_components():
-    result = score.score([filing(2022, form="990EZ"), filing(2023, form="990EZ")],
-                         current_year=2026)
-    assert result["components"]["officer_comp"]["score"] is None
-    assert result["components"]["fundraising_cost"]["score"] is None
-    assert result["confidence"] == 0.75
-    assert 0 <= result["score"] <= 100
+def test_margin_is_the_median_of_the_last_three_years():
+    fl = [filing(2020, expenses=200_000), filing(2021, expenses=95_000),
+          filing(2022, expenses=90_000), filing(2023, expenses=150_000)]
+    # last three: -0.5 (2021? no: 2021 +0.05, 2022 +0.10, 2023 -0.50) -> median 0.05
+    assert abs(score.median_margin(score.one_per_year(fl)) - 0.05) < 1e-9
 
 
-def test_full_990_filer_has_full_confidence():
-    fl = [filing(y) for y in range(2020, 2025)]
+def test_weights_sum_to_one_for_each_form():
+    for form, weights in score.WEIGHTS.items():
+        assert abs(sum(weights.values()) - 1.0) < 1e-9
+
+
+def test_ez_filer_can_reach_full_confidence():
+    fl = [filing(y, form="990EZ", net_assets=50_000 + 10_000 * (y - 2019)) for y in range(2019, 2025)]
     result = score.score(fl, current_year=2026)
+    assert "officer_comp" not in result["components"]
+    assert result["confidence_factors"]["coverage"] == 1.0
     assert result["confidence"] == 1.0
-    assert result["years_on_file"] == 5
-    assert result["latest_year"] == 2024
-    assert result["components"]["filing_consistency"]["score"] == 100
 
 
-def test_stale_filer_loses_consistency_points():
-    result = score.score([filing(2018), filing(2019)], current_year=2026)
-    assert result["components"]["filing_consistency"]["score"] == 0
+def test_thin_history_lowers_confidence_not_score():
+    one = score.score([filing(2024)], current_year=2026)
+    assert one["confidence_factors"]["depth"] == 0.4
+    assert one["confidence"] < 0.5
+    assert one["score"] is not None
+
+
+def test_old_return_lowers_confidence():
+    result = score.score([filing(2019), filing(2020)], current_year=2026)
+    assert result["confidence_factors"]["recency"] == 0.2
+
+
+def test_zero_officer_pay_at_a_large_org_is_unknown():
+    big = score.score([filing(2024, expenses=2_000_000, revenue=2_100_000, officer_comp=0)])
+    assert big["components"]["officer_comp"]["score"] is None
+    small = score.score([filing(2024, officer_comp=0)])
+    assert small["components"]["officer_comp"]["score"] == 100
+
+
+def test_reconciliation_flags_numbers_that_do_not_add_up():
+    clean = [filing(2022, net_assets=50_000), filing(2023, net_assets=60_000)]  # +10k surplus, +10k assets
+    assert score.reconciliation(clean) == 1.0
+    off = [filing(2022, net_assets=50_000), filing(2023, net_assets=500_000)]
+    assert score.reconciliation(off) == 0.7
 
 
 def test_private_foundations_are_ignored():
@@ -78,18 +101,18 @@ def test_ensure_database_retries_when_local_db_is_empty(tmp_path):
     bad = "http://127.0.0.1:9/nothing.gz"
     empty = tmp_path / "x.db"
     db.connect(empty).close()          # schema only, no scores
-    assert db.ensure_database(empty, url=bad) is None
+    assert db.ensure_database(empty, url=bad, check_remote=False) is None
     assert not empty.exists()          # the empty file is cleared for the next try
 
     full = tmp_path / "y.db"
     conn = db.connect(full)
     db.save_scores(conn, {"1": dict(score=1, confidence=1, components={}, latest_year=2024,
                                     latest_revenue=1, years_on_file=1, size_band="Unknown")})
-    assert db.ensure_database(full, url=bad) == "present"
+    assert db.ensure_database(full, url=bad, check_remote=False) == "present"
 
     conn.execute("UPDATE scores SET computed_at = '2020-01-01T00:00:00+00:00'")
     conn.commit()
     conn.close()
     # Stale, but the download fails, so the old file stays in use.
-    assert db.ensure_database(full, url=bad, max_age_days=35) == "present"
+    assert db.ensure_database(full, url=bad, max_age_days=35, check_remote=False) == "present"
     assert full.exists()

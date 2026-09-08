@@ -15,11 +15,12 @@ organizations hand-tagged by cause.
 1. `fetch.py` pulls each seed organization's record from the ProPublica
    Nonprofit Explorer API (free, no key) into SQLite: who they are, and a
    financial extract of every Form 990 or 990-EZ on file.
-2. `score.py` turns those filings into a 0-100 score from six components:
-   donor growth, filing consistency, operating margin, reserves, officer pay
-   share and fundraising cost. Each is explained in the module docstring and
-   on the app page. A confidence figure says how much of the score could be
-   computed from the data available.
+2. `score.py` turns those filings into a 0-100 score from four components:
+   donor growth, operating margin, reserves and officer pay share, with
+   separate weights for the full 990 and the 990-EZ. A confidence figure,
+   built from coverage, depth of history, recency, stability and whether
+   the numbers reconcile, says how far to trust the score. Both are
+   explained in the module docstring and on the app page.
 3. `app.py` is a Streamlit page: filter by cause, state and size, see the
    ranking, click an organization to see its components and money over time.
 
@@ -39,8 +40,10 @@ of the seed list; it takes about an hour or two for all 20,000. Rerun
 Or skip the fetch: if there is no `apptruism.db` when the app starts, it
 downloads the latest published one from the repo's `data` release. A
 GitHub Action rebuilds and republishes that file on the first of each month,
-and can be run by hand from the Actions tab. The hosted copy on Streamlit
-Community Cloud gets its data the same way.
+and a second, fast one rescores the published data whenever `score.py` or
+`db.py` changes on master. Both can be run by hand from the Actions tab.
+The app checks the release for a newer file about once an hour, so the
+hosted copy on Streamlit Community Cloud follows on its own.
 
 ```bash
 ./venv/bin/python -m pytest
@@ -75,8 +78,14 @@ which the app gives.
 The score is public so that it can be argued with. A change to a weight or a
 curve in `score.py` should come with evidence: run `review.py`, which writes
 the top and bottom of every cause to a spreadsheet, and say which rows the
-change fixes and which it makes worse. Rankings move when weights move, so
-changes land as their own commits with the reasoning in the message.
+change fixes and which it makes worse. `experiments/score_v2.py` is the
+comparison that produced the current version and a template for the next
+one. Rankings move when weights move, so changes land as their own commits
+with the reasoning in the message.
+
+Known gap: the margin curve punishes organizations that run deficits by
+design, such as grantmakers and endowed schools, even when deep reserves
+cover them. Fixing that is the next scoring change.
 
 ## Not yet
 
