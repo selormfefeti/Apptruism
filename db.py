@@ -476,31 +476,54 @@ def causes_by_ein(conn) -> dict[str, str]:
     return {r["ein"]: cause_for(r["category"], r["ntee"], r["name"])[0] for r in rows}
 
 
-def ranking_rows(conn) -> list[dict]:
+RANKING_SQL = """
+    SELECT sc.ein, COALESCE(o.name, s.name, u.name) AS name,
+           s.category AS seed_category, s.subcategory, {extra}
+           COALESCE(o.city, u.city) AS city, COALESCE(o.state, u.state) AS state,
+           COALESCE(o.ntee_code, u.ntee_code) AS ntee_code, o.subsection_code,
+           COALESCE(o.active, 1) AS active, u.ruling, u.income_amt,
+           sc.score, sc.confidence, sc.latest_year, sc.latest_revenue,
+           sc.years_on_file, sc.size_band, sc.cause_rank, sc.cause_total, sc.cause_pct,
+           json_extract(sc.components, '$.donor_growth.value') AS donor_growth
+    FROM scores sc
+    LEFT JOIN seed s ON s.ein = sc.ein
+    LEFT JOIN orgs o ON o.ein = sc.ein
+    LEFT JOIN universe u ON u.ein = sc.ein
+    WHERE {where}
+    ORDER BY sc.score DESC, sc.confidence DESC
+"""
+FULL_COLUMNS = "s.mission, s.website, sc.components, sc.confidence_factors,"
+
+
+def _with_cause(row) -> dict:
+    row = dict(row)
+    row["category"], row["cause_source"] = cause_for(row["seed_category"], row["ntee_code"], row["name"])
+    return row
+
+
+def ranking_rows(conn, slim=False) -> list[dict]:
+    """
+    Every scored organization. slim=True leaves out mission text and the
+    component JSON, which the app fetches per organization instead, so the
+    frame for 370k organizations stays small.
+    """
+    sql = RANKING_SQL.format(extra="" if slim else FULL_COLUMNS, where="sc.score IS NOT NULL")
+    return [_with_cause(r) for r in conn.execute(sql)]
+
+
+def org_detail(conn, ein) -> dict | None:
+    sql = RANKING_SQL.format(extra=FULL_COLUMNS, where="sc.ein = ?")
+    row = conn.execute(sql, (ein,)).fetchone()
+    return _with_cause(row) if row else None
+
+
+def search_eins(conn, query) -> set[str]:
+    """EINs whose name or 2019 mission text contains the query."""
+    like = f"%{query.strip()}%"
     rows = conn.execute(
-        """
-        SELECT sc.ein, COALESCE(o.name, s.name, u.name) AS name,
-               s.category AS seed_category, s.subcategory, s.mission, s.website,
-               COALESCE(o.city, u.city) AS city, COALESCE(o.state, u.state) AS state,
-               COALESCE(o.ntee_code, u.ntee_code) AS ntee_code, o.subsection_code,
-               COALESCE(o.active, 1) AS active, u.ruling, u.income_amt,
-               sc.score, sc.confidence, sc.components, sc.latest_year,
-               sc.latest_revenue, sc.years_on_file, sc.size_band,
-               sc.cause_rank, sc.cause_total, sc.cause_pct, sc.confidence_factors
-        FROM scores sc
-        LEFT JOIN seed s ON s.ein = sc.ein
-        LEFT JOIN orgs o ON o.ein = sc.ein
-        LEFT JOIN universe u ON u.ein = sc.ein
-        WHERE sc.score IS NOT NULL
-        ORDER BY sc.score DESC, sc.confidence DESC
-        """
-    )
-    out = []
-    for r in rows:
-        row = dict(r)
-        row["category"], row["cause_source"] = cause_for(row["seed_category"], row["ntee_code"], row["name"])
-        out.append(row)
-    return out
+        "SELECT o.ein FROM orgs o LEFT JOIN seed s ON s.ein = o.ein LEFT JOIN universe u ON u.ein = o.ein "
+        "WHERE COALESCE(o.name, s.name, u.name) LIKE ? OR s.mission LIKE ?", (like, like))
+    return {r["ein"] for r in rows}
 
 
 def scores_stamp(conn) -> str:

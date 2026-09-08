@@ -85,16 +85,18 @@ if db.ensure_database() == "downloaded":
     database.clear()
 
 
+TABLE_ROWS = 500  # what is sent to the browser; the filters narrow it further
+
+
 @st.cache_data
 def ranking(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> pd.DataFrame:
     """Both arguments are only cache keys: a rescore or a schema change refreshes the page."""
-    df = pd.DataFrame(db.ranking_rows(database()))
-    if df.empty:
-        return df
-    parsed = df["components"].map(json.loads)
-    for name in scoring.COMPONENTS:
-        df[name] = parsed.map(lambda c, n=name: c.get(n, {}).get("value"))
-    return df
+    return pd.DataFrame(db.ranking_rows(database(), slim=True))
+
+
+@st.cache_data(max_entries=200)
+def search(query: str, stamp: str) -> set:
+    return db.search_eins(database(), query)
 
 
 @st.cache_data
@@ -166,10 +168,8 @@ with st.sidebar:
     st.caption("Data: ProPublica Nonprofit Explorer, from IRS Form 990 e-files.")
 
 view = df
-if query:
-    q = query.lower()
-    view = view[view["name"].str.lower().str.contains(q, na=False)
-                | view["mission"].str.lower().str.contains(q, na=False)]
+if query.strip():
+    view = view[view["ein"].isin(search(query, STAMP))]
 if chosen_cats:
     view = view[view["category"].isin(chosen_cats)]
 if chosen_states:
@@ -191,6 +191,9 @@ st.subheader(f"{len(view):,} organizations")
 if view.empty:
     st.info("Nothing matches those filters.")
     st.stop()
+if len(view) > TABLE_ROWS:
+    st.caption(f"Showing the top {TABLE_ROWS:,}. Use the filters or the search to narrow the list.")
+    view = view.head(TABLE_ROWS)
 
 table_cols = ["rank", "name", "category", "state", "size_band", "latest_revenue",
               "score", "cause_pct", "confidence", "donor_growth", "latest_year"]
@@ -217,9 +220,10 @@ event = st.dataframe(
     },
 )
 picked = event.selection.rows
-org = view.iloc[picked[0]] if picked else view.iloc[0]
+chosen_ein = view.iloc[picked[0]]["ein"] if picked else view.iloc[0]["ein"]
 if not picked:
     st.caption("Click a row to see why it scored what it did. Showing the top result.")
+org = db.org_detail(database(), chosen_ein)
 
 # ---------------------------------------------------------------- detail
 st.divider()
