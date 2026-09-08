@@ -277,7 +277,7 @@ def cause_percentiles(scores: dict[str, float], causes: dict[str, str]) -> dict[
 def main() -> None:
     conn = db.connect()
     results = {}
-    for ein, filings in db.all_filings(conn).items():
+    for ein, filings in db.iter_filings(conn):
         result = score(filings)
         if result:
             results[ein] = result

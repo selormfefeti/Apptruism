@@ -170,3 +170,12 @@ def test_universe_refresh_feeds_fetch_and_marks_absent_orgs_inactive(tmp_path):
     # refetching an inactive org keeps it inactive
     db.save_org(conn, "000000002", {"ein": "000000002", "name": "Gone"}, [], "ok")
     assert conn.execute("SELECT active FROM orgs WHERE ein='000000002'").fetchone()[0] == 0
+
+
+def test_iter_filings_groups_by_organization(tmp_path):
+    import db
+    conn = db.connect(tmp_path / "f.db")
+    db.save_org(conn, "000000001", {"ein": "000000001"}, [filing(2023), filing(2024)], "ok")
+    db.save_org(conn, "000000002", {"ein": "000000002"}, [filing(2024)], "ok")
+    groups = {ein: len(fl) for ein, fl in db.iter_filings(conn)}
+    assert groups == {"000000001": 2, "000000002": 1}

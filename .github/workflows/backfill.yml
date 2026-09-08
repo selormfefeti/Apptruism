@@ -1,0 +1,68 @@
+name: Backfill
+
+# Nightly until done: start from the published database, refresh the
+# universe, fetch organizations in the target set that have never been
+# fetched, in EIN order so every size arrives evenly, for up to 290 minutes.
+# Then rescore and publish. When nothing is left to fetch it does nothing.
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Fetch time budget in minutes"
+        default: "290"
+
+# One data workflow at a time, so two runs never publish over each other.
+concurrency:
+  group: data-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Start from the published database
+        run: |
+          curl -sSLf -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
+          gunzip -f apptruism.db.gz && ls -la apptruism.db
+      - name: Load the 2019 seed
+        run: python fetch.py --load-seed --limit 1
+      - name: Refresh the universe from the IRS master file
+        run: python universe.py
+      - name: Count what is left
+        id: pending
+        run: |
+          COUNT=$(python -c "import db; print(len(db.pending_eins(db.connect())))")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Organizations still to fetch before this run: $COUNT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch
+        if: steps.pending.outputs.count != '0'
+        run: python fetch.py --max-minutes ${{ github.event.inputs.minutes || 290 }} | tee fetch.log
+      - name: Score
+        if: steps.pending.outputs.count != '0'
+        run: python score.py
+      - name: Compress
+        if: steps.pending.outputs.count != '0'
+        run: gzip -6 -f apptruism.db && ls -la apptruism.db.gz
+      - name: Publish as the "data" release
+        if: steps.pending.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload data apptruism.db.gz --clobber
+          gh release edit data --notes "Backfill $(date -u +%Y-%m-%d) by the backfill workflow. $(tail -1 fetch.log). Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."
+          tail -1 fetch.log >> "$GITHUB_STEP_SUMMARY"
+      - name: Nothing left
+        if: steps.pending.outputs.count == '0'
+        run: echo "The target set is fully fetched. Nothing to do." >> "$GITHUB_STEP_SUMMARY"

@@ -7,6 +7,7 @@ Pull organizations and filings from ProPublica into the local database.
     python fetch.py --ein 454824300          one org, handy for spot checks
     python fetch.py --retry-errors           revisit orgs that errored
     python fetch.py --refresh-oldest 40000   re-pull the most out-of-date records
+    python fetch.py --max-minutes 290        stop cleanly after a time budget
 
 Unfetched EINs come from the seed and from the universe table that
 universe.py fills from the IRS master file.
@@ -54,6 +55,8 @@ def main(argv=None) -> None:
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--refresh-oldest", type=int, metavar="N",
                         help="re-fetch the N active organizations with the oldest records")
+    parser.add_argument("--max-minutes", type=float, metavar="M",
+                        help="stop after M minutes, keeping everything fetched so far")
     parser.add_argument("--db", default=db.DB_PATH)
     args = parser.parse_args(argv)
 
@@ -75,17 +78,22 @@ def main(argv=None) -> None:
     tally: Counter = Counter()
     start = time.monotonic()
     print(f"fetching {len(eins)} organizations")
+    done = 0
     for i, ein in enumerate(eins, 1):
         tally[fetch_one(client, conn, ein)] += 1
+        done = i
         if i % 25 == 0:
             conn.commit()
+        if args.max_minutes and (time.monotonic() - start) / 60 >= args.max_minutes:
+            print(f"time budget of {args.max_minutes:g} minutes reached after {i} organizations", flush=True)
+            break
         if i % 100 == 0 or i == len(eins):
             rate = i / max(time.monotonic() - start, 1e-6)
             left = (len(eins) - i) / rate / 60
             print(f"{i}/{len(eins)}  ok={tally['ok']} not_found={tally['not_found']} "
                   f"error={tally['error']}  {rate:.1f}/s  ~{left:.0f} min left", flush=True)
     conn.commit()
-    print("done:", dict(tally))
+    print("done:", dict(tally), f"| {len(eins) - done} left in the queue")
 
 
 if __name__ == "__main__":

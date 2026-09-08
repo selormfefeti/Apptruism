@@ -432,10 +432,20 @@ def filings_for(conn, ein) -> list[dict]:
 
 
 def all_filings(conn) -> dict[str, list[dict]]:
-    grouped: dict[str, list[dict]] = {}
+    return dict(iter_filings(conn))
+
+
+def iter_filings(conn):
+    """(ein, filings) one organization at a time, so 4M rows never sit in memory together."""
+    current, batch = None, []
     for r in conn.execute("SELECT * FROM filings ORDER BY ein, tax_period"):
-        grouped.setdefault(r["ein"], []).append(dict(r))
-    return grouped
+        if r["ein"] != current:
+            if batch:
+                yield current, batch
+            current, batch = r["ein"], []
+        batch.append(dict(r))
+    if batch:
+        yield current, batch
 
 
 def save_scores(conn, results: dict[str, dict]) -> None:

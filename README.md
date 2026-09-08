@@ -105,9 +105,9 @@ cover them. Fixing that is the next scoring change.
 
 ## Not yet
 
-- The backfill from the 2019 seed to the full target set, about 362,000
-  organizations, and the switch to NTEE as the primary taxonomy once they
-  are in.
+- The backfill of the full target set is running nightly (`backfill.yml`)
+  and will take about a week from 2026-09-09. Until it finishes, the
+  ranking covers the 2019 seed plus whatever has arrived so far.
 - Program expense ratio. ProPublica's extract does not carry program
   expenses; that needs the raw XML from the IRS zips.
 - Anything from the 2020 pitch beyond ranking: maps, news, payroll giving,

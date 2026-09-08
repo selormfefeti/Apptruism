@@ -13,6 +13,11 @@ on:
       - .github/workflows/rescore.yml
   workflow_dispatch:
 
+# One data workflow at a time, so two runs never publish over each other.
+concurrency:
+  group: data-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
