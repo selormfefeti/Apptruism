@@ -35,7 +35,8 @@ SIZE_ORDER = ["Under $100k", "$100k to $1M", "$1M to $10M", "Over $10M", "Unknow
 
 
 @st.cache_resource
-def database():
+def database(schema_version: int = db.SCHEMA_VERSION):
+    """Keyed on the schema version so a code change that adds a column reopens it."""
     return db.connect()
 
 

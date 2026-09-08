@@ -26,6 +26,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "apptruism.db"
+
+# Bump when a column is added. The app keys its cached connection on this,
+# so a code pull that changes the schema reopens the connection and the
+# migrations in connect() run, instead of an old connection querying a
+# column it never learned about.
+SCHEMA_VERSION = 2
+
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 
 # The refresh-data workflow rebuilds the database monthly and publishes it
@@ -167,6 +174,8 @@ def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35, check_remote=Tr
         with urllib.request.urlopen(url, timeout=120) as resp, gzip.GzipFile(fileobj=resp) as gz, \
                 open(partial, "wb") as out:
             shutil.copyfileobj(gz, out)
+        for sidecar in (path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+            sidecar.unlink(missing_ok=True)  # journal of the file being replaced; poison for the new one
         partial.replace(path)
         LAST_DOWNLOAD_ERROR = None
         return "downloaded"
