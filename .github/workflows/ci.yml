@@ -1,0 +1,45 @@
+name: CI
+
+# On every push: the tests on the Python the cloud runs, plus a smoke test of
+# the app's data path against the real published database, so a query or
+# schema mistake fails here rather than on the site.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      - name: Smoke test the data path against the published database
+        run: |
+          if curl -sSLf -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz; then
+            gunzip -f apptruism.db.gz
+            python - <<'PY'
+          import db, score
+          conn = db.connect()                      # runs the migrations the app would run
+          rows = db.ranking_rows(conn, slim=True)  # the app's main query
+          assert rows, "ranking is empty"
+          detail = db.org_detail(conn, rows[0]["ein"])
+          assert detail and "components" in detail
+          counts = db.counts(conn)
+          assert counts["scored"] > 0
+          assert db.scores_stamp(conn)
+          ein, filings = next(db.iter_filings(conn))
+          assert score.score(filings) is not None
+          print(f"ok: {len(rows):,} ranked organizations, {counts['filings']:,} filings")
+          PY
+          else
+            echo "no published database yet; skipping smoke test"
+          fi
