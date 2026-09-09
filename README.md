@@ -99,9 +99,11 @@ comparison that produced the current version and a template for the next
 one. Rankings move when weights move, so changes land as their own commits
 with the reasoning in the message.
 
-Known gap: the margin curve punishes organizations that run deficits by
-design, such as grantmakers and endowed schools, even when deep reserves
-cover them. Fixing that is the next scoring change.
+Scoring changes so far, each with its evidence in the commit message:
+the second version of the score (2026-09-08, `experiments/score_v2.py`),
+and the reserve-aware margin floor with ranking within cause and size band
+(2026-09-09), which lifted 13.6% of organizations by 11.8 points on
+average, 87% of them under \$1M in revenue.
 
 ## Not yet
 

@@ -55,9 +55,18 @@ year looks typical, and whether the numbers reconcile from one year to the
 next. A long, steady, consistent history scores near 1.0. A single year of
 data can't get above 0.4, however good it looks.
 
+A deficit isn't distress when reserves cover it. An organization spending down
+a year or more of reserves on purpose, as grantmakers and endowed schools do,
+keeps a floor under its margin points, and the score breakdown says so.
+
 **In its cause** ranks each organization only against others working on the
 same cause, because a food pantry and a university shouldn't be compared on
-one number.
+one number. **Among its size** goes one step further and compares it only
+with organizations of the same cause and size band, which is the fairer
+comparison for small organizations, whose margins run thinner by nature.
+The **grassroots view** in the sidebar uses that ranking, limits the list to
+organizations under \$1M, and lowers the confidence bar so short histories
+still show.
 """
 
 METHOD_LIMITS = r"""
@@ -91,7 +100,10 @@ TABLE_ROWS = 500  # what is sent to the browser; the filters narrow it further
 @st.cache_data
 def ranking(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> pd.DataFrame:
     """Both arguments are only cache keys: a rescore or a schema change refreshes the page."""
-    return pd.DataFrame(db.ranking_rows(database(), slim=True))
+    df = pd.DataFrame(db.ranking_rows(database(), slim=True))
+    if not df.empty:
+        df["ruling_year"] = pd.to_numeric(df["ruling"].astype(str).str[:4], errors="coerce")
+    return df
 
 
 @st.cache_data(max_entries=200)
@@ -142,15 +154,23 @@ if df.empty:
 with st.sidebar:
     st.title("Apptruism")
     st.caption("Charities ranked on what their IRS filings show.")
+    grassroots = st.toggle("Grassroots view", value=False,
+                           help="Organizations under $1M, ranked among others of their cause and size, "
+                                "with a lower confidence bar so short histories still show.")
     query = st.text_input("Search name or mission")
     categories = sorted(df["category"].dropna().unique())
     chosen_cats = st.multiselect("Cause", categories)
     states = sorted(df["state"].dropna().unique())
     chosen_states = st.multiselect("State", states)
     sizes = [s for s in SIZE_ORDER if s in set(df["size_band"])]
-    chosen_sizes = st.multiselect("Size (latest revenue)", sizes)
-    min_conf = st.slider("Minimum confidence", 0.0, 1.0, 0.7, 0.05,
-                         help="Share of the scoring weight that could be computed from the data on file.")
+    chosen_sizes = st.multiselect("Size (latest revenue)", sizes,
+                                  default=["Under $100k", "$100k to $1M"] if grassroots else [])
+    min_conf = st.slider("Minimum confidence", 0.0, 1.0, 0.4 if grassroots else 0.7, 0.05,
+                         help="How far the score can be trusted, from the depth and consistency of the data on file.")
+    years = sorted(int(y) for y in df["ruling_year"].dropna().unique())
+    formed_since = st.select_slider("Formed since", options=["any"] + [y for y in years if y >= 1990],
+                                    value="any",
+                                    help="Year the IRS granted tax exemption, which is close to when the organization started.")
     only_c3 = st.checkbox("501(c)(3) charities only", value=True,
                           help="Gifts to 501(c)(3)s are tax deductible. Unticking adds trade "
                                "associations, booster clubs, fraternal orders and the like.")
@@ -183,7 +203,12 @@ if hide_stale:
     view = view[view["latest_year"] >= CURRENT_YEAR - 3]
 if hide_gone:
     view = view[view["active"] == 1]
-view = view.sort_values(["score", "confidence"], ascending=False).reset_index(drop=True)
+if formed_since != "any":
+    view = view[view["ruling_year"] >= int(formed_since)]
+if grassroots:
+    view = view.sort_values(["peer_pct", "score", "confidence"], ascending=False).reset_index(drop=True)
+else:
+    view = view.sort_values(["score", "confidence"], ascending=False).reset_index(drop=True)
 view.insert(0, "rank", range(1, len(view) + 1))
 
 # ---------------------------------------------------------------- ranking
@@ -196,7 +221,7 @@ if len(view) > TABLE_ROWS:
     view = view.head(TABLE_ROWS)
 
 table_cols = ["rank", "name", "category", "state", "size_band", "latest_revenue",
-              "score", "cause_pct", "confidence", "donor_growth", "latest_year"]
+              "score", "peer_pct", "cause_pct", "confidence", "donor_growth", "latest_year"]
 event = st.dataframe(
     view[table_cols],
     hide_index=True,
@@ -211,6 +236,9 @@ event = st.dataframe(
         "size_band": "Size",
         "latest_revenue": st.column_config.NumberColumn("Revenue", format="dollar"),
         "score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
+        "peer_pct": st.column_config.ProgressColumn(
+            "Among its size", min_value=0, max_value=100, format="%.0f%%",
+            help="Share of organizations with the same cause and size that this one scores at or above."),
         "cause_pct": st.column_config.ProgressColumn(
             "In its cause", min_value=0, max_value=100, format="%.0f%%",
             help="Share of organizations with the same cause that this one scores at or above."),
@@ -245,7 +273,8 @@ with left:
         old_tag = f" · 2019 tag: {org['seed_category']}"
         if org["subcategory"]:
             old_tag += f" / {org['subcategory']}"
-    st.caption(f"{org['category']} ({via}) · {place} · {subsection}{old_tag} · EIN {org['ein']}")
+    since = f" · exempt since {str(org['ruling'])[:4]}" if org.get("ruling") else ""
+    st.caption(f"{org['category']} ({via}) · {place} · {subsection}{since}{old_tag} · EIN {org['ein']}")
     if not org["active"]:
         st.warning("No longer on the IRS list of exempt organizations. Revoked, merged or dissolved.")
     if org["mission"]:
@@ -256,16 +285,22 @@ with left:
         links.append(f"[Website]({site})")
     st.markdown(" · ".join(links))
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Score", f"{org['score']:.0f}")
-    if pd.notna(org.get("cause_rank")):
-        m2.metric("In its cause", f"{int(org['cause_rank'])} of {int(org['cause_total']):,}",
+    if org.get("peer_rank") is not None:
+        m2.metric("Among its size", f"{int(org['peer_rank'])} of {int(org['peer_total']):,}",
+                  help=f"Scores at or above {org['peer_pct']:.0f}% of {org['category']} organizations "
+                       f"in the {org['size_band']} band.")
+    else:
+        m2.metric("Among its size", "n/a")
+    if org.get("cause_rank") is not None:
+        m3.metric("In its cause", f"{int(org['cause_rank'])} of {int(org['cause_total']):,}",
                   help=f"Scores at or above {org['cause_pct']:.0f}% of {org['category']} organizations.")
     else:
-        m2.metric("In its cause", "n/a")
-    m3.metric("Confidence", f"{org['confidence']:.2f}")
-    m4.metric("Latest revenue", money(org["latest_revenue"]))
-    m5.metric("Years on file", int(org["years_on_file"]))
+        m3.metric("In its cause", "n/a")
+    m4.metric("Confidence", f"{org['confidence']:.2f}")
+    m5.metric("Latest revenue", money(org["latest_revenue"]))
+    m6.metric("Years on file", int(org["years_on_file"]))
 
     comps = json.loads(org["components"])
     rows = []
@@ -273,7 +308,7 @@ with left:
         label = scoring.LABELS[name][0]
         rows.append({
             "Component": label,
-            "Value": fmt_value(name, comp["value"]),
+            "Value": fmt_value(name, comp["value"]) + (f" ({comp['note']})" if comp.get("note") else ""),
             "Points": None if comp["score"] is None else round(comp["score"]),
             "Weight": f"{comp['weight'] * 100:.0f}%",
         })

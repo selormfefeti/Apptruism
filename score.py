@@ -38,8 +38,14 @@ factors between 0 and 1:
                   assets year to year; can cost at most 30%
 
 A food pantry and a university should not be compared on one number, so
-every organization also gets a rank and percentile among the others tagged
-with the same cause.
+every organization also gets a rank and percentile among the others with
+the same cause, and another among those with the same cause and size band.
+The second is the fairer one for small organizations, whose margins run
+thinner and more volatile than large ones by nature.
+
+A deficit is not distress when reserves cover it: an organization spending
+down twelve or more months of reserves on purpose, as grantmakers and
+endowed schools do, keeps a floor under its margin points.
 
     python score.py            recompute the scores table for every org
 """
@@ -80,6 +86,9 @@ FACTOR_LABELS = {
     "stability": "Latest year typical",
     "reconciliation": "Numbers add up",
 }
+
+# Margin points cannot fall below these when the deficit is backed by reserves.
+RESERVE_FLOORS = [(36, 65), (12, 45)]  # (months of reserves, minimum points)
 
 MIN_CONTRIBUTIONS = 1_000
 ZERO_PAY_SUSPECT_EXPENSES = 500_000
@@ -142,6 +151,16 @@ def recent_margins(filings) -> list[float]:
 def median_margin(filings) -> float | None:
     ms = sorted(recent_margins(filings))
     return ms[len(ms) // 2] if ms else None
+
+
+def margin_points(value, months) -> tuple[float, str | None]:
+    """Points for the margin, with a floor when a deficit is covered by reserves."""
+    points = piecewise(value, CURVES["margin"])
+    if value < 0 and months is not None:
+        for needed, floor in RESERVE_FLOORS:
+            if months >= needed and points < floor:
+                return float(floor), f"deficit covered by {months:.0f} months of reserves"
+    return points, None
 
 
 def reserve_months(latest) -> float | None:
@@ -227,8 +246,16 @@ def score(filings, current_year=None) -> dict | None:
     components = {}
     for name, weight in weights.items():
         value = raw[name]
-        points = None if value is None else piecewise(value, CURVES[name])
+        note = None
+        if value is None:
+            points = None
+        elif name == "margin":
+            points, note = margin_points(value, raw["reserves"])
+        else:
+            points = piecewise(value, CURVES[name])
         components[name] = {"value": value, "score": points, "weight": weight}
+        if note:
+            components[name]["note"] = note
 
     available = [(c["score"], c["weight"]) for c in components.values() if c["score"] is not None]
     got = sum(w for _, w in available)
@@ -256,15 +283,16 @@ def score(filings, current_year=None) -> dict | None:
     }
 
 
-def cause_percentiles(scores: dict[str, float], causes: dict[str, str]) -> dict[str, tuple]:
+def cause_percentiles(scores: dict[str, float], groups_by_ein: dict) -> dict[str, tuple]:
     """
-    {ein: (rank, total, percentile)} within each cause. Rank 1 is the best.
-    Organizations with no cause on record are ranked among themselves.
+    {ein: (rank, total, percentile)} within each group. Rank 1 is the best.
+    The group key can be a cause or a (cause, size band) pair; organizations
+    with no key on record are ranked among themselves.
     """
-    groups: dict[str, list] = {}
+    groups: dict = {}
     for ein, value in scores.items():
         if value is not None:
-            groups.setdefault(causes.get(ein, ""), []).append((ein, value))
+            groups.setdefault(groups_by_ein.get(ein, ""), []).append((ein, value))
     out = {}
     for members in groups.values():
         members.sort(key=lambda m: m[1], reverse=True)
@@ -281,10 +309,13 @@ def main() -> None:
         result = score(filings)
         if result:
             results[ein] = result
-    ranks = cause_percentiles({e: r["score"] for e, r in results.items()},
-                              db.causes_by_ein(conn))
-    for ein, (rank, total, pct) in ranks.items():
+    scores = {e: r["score"] for e, r in results.items()}
+    causes = db.causes_by_ein(conn)
+    for ein, (rank, total, pct) in cause_percentiles(scores, causes).items():
         results[ein].update(cause_rank=rank, cause_total=total, cause_pct=pct)
+    peers = {e: (causes.get(e, ""), r["size_band"]) for e, r in results.items()}
+    for ein, (rank, total, pct) in cause_percentiles(scores, peers).items():
+        results[ein].update(peer_rank=rank, peer_total=total, peer_pct=pct)
     db.save_scores(conn, results)
     scored = [r["score"] for r in results.values() if r["score"] is not None]
     print(f"scored {len(results)} organizations")

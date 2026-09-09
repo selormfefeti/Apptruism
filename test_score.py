@@ -179,3 +179,22 @@ def test_iter_filings_groups_by_organization(tmp_path):
     db.save_org(conn, "000000002", {"ein": "000000002"}, [filing(2024)], "ok")
     groups = {ein: len(fl) for ein, fl in db.iter_filings(conn)}
     assert groups == {"000000001": 2, "000000002": 1}
+
+
+def test_deficit_backed_by_reserves_keeps_a_floor():
+    deep = score.margin_points(-0.20, 40)     # 40 months of reserves
+    assert deep == (65.0, "deficit covered by 40 months of reserves")
+    some = score.margin_points(-0.20, 15)
+    assert some[0] == 45.0
+    thin = score.margin_points(-0.20, 3)
+    assert thin[1] is None and thin[0] < 45
+    surplus = score.margin_points(0.10, 40)
+    assert surplus[1] is None
+
+
+def test_peer_percentiles_use_cause_and_size():
+    scores = {"a": 90.0, "b": 70.0, "c": 50.0}
+    peers = {"a": ("Human Services", "Under $100k"), "b": ("Human Services", "Under $100k"),
+             "c": ("Human Services", "Over $10M")}
+    out = score.cause_percentiles(scores, peers)
+    assert out["a"] == (1, 2, 100.0) and out["b"] == (2, 2, 50.0) and out["c"] == (1, 1, 100.0)

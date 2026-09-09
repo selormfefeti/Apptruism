@@ -32,7 +32,7 @@ DB_PATH = Path(__file__).parent / "apptruism.db"
 # so a code pull that changes the schema reopens the connection and the
 # migrations in connect() run, instead of an old connection querying a
 # column it never learned about.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 
@@ -221,7 +221,10 @@ CREATE TABLE IF NOT EXISTS scores (
     cause_rank INTEGER,
     cause_total INTEGER,
     cause_pct REAL,
-    confidence_factors TEXT
+    confidence_factors TEXT,
+    peer_rank INTEGER,
+    peer_total INTEGER,
+    peer_pct REAL
 );
 """
 
@@ -233,6 +236,9 @@ MIGRATIONS = [
     ("scores", "cause_pct", "REAL"),
     ("scores", "confidence_factors", "TEXT"),
     ("orgs", "active", "INTEGER DEFAULT 1"),
+    ("scores", "peer_rank", "INTEGER"),
+    ("scores", "peer_total", "INTEGER"),
+    ("scores", "peer_pct", "REAL"),
 ]
 
 FILING_COLUMNS = [
@@ -453,14 +459,16 @@ def save_scores(conn, results: dict[str, dict]) -> None:
     conn.executemany(
         """INSERT OR REPLACE INTO scores
            (ein, score, confidence, components, latest_year, latest_revenue, years_on_file,
-            size_band, computed_at, cause_rank, cause_total, cause_pct, confidence_factors)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            size_band, computed_at, cause_rank, cause_total, cause_pct, confidence_factors,
+            peer_rank, peer_total, peer_pct)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         [
             (
                 ein, s["score"], s["confidence"], json.dumps(s["components"]),
                 s["latest_year"], s["latest_revenue"], s["years_on_file"],
                 s["size_band"], stamp, s.get("cause_rank"), s.get("cause_total"),
                 s.get("cause_pct"), json.dumps(s.get("confidence_factors") or {}),
+                s.get("peer_rank"), s.get("peer_total"), s.get("peer_pct"),
             )
             for ein, s in results.items()
         ],
@@ -484,6 +492,7 @@ RANKING_SQL = """
            COALESCE(o.active, 1) AS active, u.ruling, u.income_amt,
            sc.score, sc.confidence, sc.latest_year, sc.latest_revenue,
            sc.years_on_file, sc.size_band, sc.cause_rank, sc.cause_total, sc.cause_pct,
+           sc.peer_rank, sc.peer_total, sc.peer_pct,
            json_extract(sc.components, '$.donor_growth.value') AS donor_growth
     FROM scores sc
     LEFT JOIN seed s ON s.ein = sc.ein
