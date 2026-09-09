@@ -253,6 +253,21 @@ ORG_COLUMNS = [
 ]
 
 
+def code_version() -> str:
+    """
+    A short hash of the source files. Streamlit Community Cloud pulls new
+    code into a running process and keeps every cache, so the app keys its
+    caches on this and starts clean whenever the code changes.
+    """
+    import hashlib
+    h = hashlib.md5()
+    for name in ("app.py", "db.py", "score.py", "propublica.py"):
+        path = Path(__file__).parent / name
+        if path.exists():
+            h.update(path.read_bytes())
+    return h.hexdigest()[:10]
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 

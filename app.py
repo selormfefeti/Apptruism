@@ -10,6 +10,7 @@ hidden behind it, because the whole point is that a donor can see them.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pandas as pd
 import streamlit as st
@@ -82,11 +83,28 @@ argued with evidence, in public.
 """
 
 
+# Streamlit Community Cloud pulls new code into the running process and
+# keeps every cache. Cache keys only include arguments passed explicitly, so
+# every cached function here takes the code version as a real argument, and
+# a code change also clears whatever the previous version cached.
+CODE_VERSION = db.code_version()
+
+
 @st.cache_resource
-def database(schema_version: int = db.SCHEMA_VERSION):
-    """Keyed on the schema version so a code change that adds a column reopens it."""
+def database(code_version: str):
+    """One connection per code version, so schema migrations run after a pull."""
     return db.connect()
 
+
+@st.cache_resource
+def _start_clean(code_version: str) -> bool:
+    """Runs once per code version per process: drop caches left by older code."""
+    st.cache_data.clear()
+    database.clear()
+    return True
+
+
+_start_clean(CODE_VERSION)
 
 # Runs on every script run, and is cheap when the data is already there. A
 # download replaces the file under the cached connection, so drop that.
@@ -98,22 +116,22 @@ TABLE_ROWS = 500  # what is sent to the browser; the filters narrow it further
 
 
 @st.cache_data
-def ranking(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> pd.DataFrame:
-    """Both arguments are only cache keys: a rescore or a schema change refreshes the page."""
-    df = pd.DataFrame(db.ranking_rows(database(), slim=True))
+def ranking(stamp: str, code_version: str) -> pd.DataFrame:
+    """Both arguments are only cache keys: a rescore or a code change refreshes the page."""
+    df = pd.DataFrame(db.ranking_rows(database(code_version), slim=True))
     if not df.empty:
         df["ruling_year"] = pd.to_numeric(df["ruling"].astype(str).str[:4], errors="coerce")
     return df
 
 
 @st.cache_data(max_entries=200)
-def search(query: str, stamp: str) -> set:
-    return db.search_eins(database(), query)
+def search(query: str, stamp: str, code_version: str) -> set:
+    return db.search_eins(database(code_version), query)
 
 
 @st.cache_data
-def counts(stamp: str, schema_version: int = db.SCHEMA_VERSION) -> dict:
-    return db.counts(database())
+def counts(stamp: str, code_version: str) -> dict:
+    return db.counts(database(code_version))
 
 
 def money(x) -> str:
@@ -137,9 +155,15 @@ def fmt_value(name, value) -> str:
     return f"{value:.0f}"
 
 
-STAMP = db.scores_stamp(database())
+STAMP = db.scores_stamp(database(CODE_VERSION))
 CURRENT_YEAR = pd.Timestamp.today().year
-df = ranking(STAMP)
+try:
+    df = ranking(STAMP, CODE_VERSION)
+except sqlite3.OperationalError:
+    # A stale connection or a file swapped underneath it. Reopen and try once more.
+    database.clear()
+    ranking.clear()
+    df = ranking(STAMP, CODE_VERSION)
 if df.empty:
     st.title("Apptruism")
     st.warning("No data yet. The published database was not available when this app started; "
@@ -178,7 +202,7 @@ with st.sidebar:
                              help="An organization with no return in three years is probably inactive.")
     hide_gone = st.checkbox("Hide organizations no longer on the IRS list", value=True,
                             help="Revoked, merged or dissolved since they were tagged in 2019.")
-    c = counts(STAMP)
+    c = counts(STAMP, CODE_VERSION)
     st.divider()
     st.caption(
         f"{c.get('scored', 0):,} scored of {c.get('fetched', 0):,} fetched, from {c.get('seed', 0):,} "
@@ -189,7 +213,7 @@ with st.sidebar:
 
 view = df
 if query.strip():
-    view = view[view["ein"].isin(search(query, STAMP))]
+    view = view[view["ein"].isin(search(query, STAMP, CODE_VERSION))]
 if chosen_cats:
     view = view[view["category"].isin(chosen_cats)]
 if chosen_states:
@@ -251,7 +275,7 @@ picked = event.selection.rows
 chosen_ein = view.iloc[picked[0]]["ein"] if picked else view.iloc[0]["ein"]
 if not picked:
     st.caption("Click a row to see why it scored what it did. Showing the top result.")
-org = db.org_detail(database(), chosen_ein)
+org = db.org_detail(database(CODE_VERSION), chosen_ein)
 
 # ---------------------------------------------------------------- detail
 st.divider()
@@ -330,7 +354,7 @@ with left:
         )
 
 with right:
-    filings = pd.DataFrame(db.filings_for(database(), org["ein"]))
+    filings = pd.DataFrame(db.filings_for(database(CODE_VERSION), org["ein"]))
     if not filings.empty:
         trend = (filings.groupby("tax_year")[["revenue", "expenses", "contributions"]]
                  .last().rename(columns=str.title))
