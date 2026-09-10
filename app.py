@@ -279,12 +279,27 @@ elif linked_ein:
     chosen_ein = linked_ein  # a shareable link: ?ein=123456789
 else:
     chosen_ein = view.iloc[0]["ein"]
-    st.caption("Click a row to see why it scored what it did. Showing the top result.")
 org = db.org_detail(database(CODE_VERSION), chosen_ein)
 if org is None:
     st.warning(f"No scored organization with EIN {chosen_ein}.")
     st.stop()
 st.query_params["ein"] = org["ein"]
+
+
+def excerpt(text, limit=220) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut.rstrip(".,;:") + "…"
+
+
+mission = org.get("irs_mission") or org.get("seed_mission")
+lead = "Showing the top result. " if not picked and not linked_ein else ""
+if mission:
+    st.info(f"**{org['name']}** · {excerpt(mission)} Details below.")
+else:
+    st.info(f"**{org['name']}** · No mission text on file yet. {lead}Details below.")
 
 # ---------------------------------------------------------------- detail
 st.divider()
@@ -326,21 +341,22 @@ with left:
         links.append(f"[Website]({site})")
     st.markdown(" · ".join(links))
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1, m2, m3 = st.columns(3)
     m1.metric("Score", f"{org['score']:.0f}")
+    m2.metric("Confidence", f"{org['confidence']:.2f}")
+    m3.metric("Latest revenue", money(org["latest_revenue"]))
+    m4, m5, m6 = st.columns(3)
     if org.get("peer_rank") is not None:
-        m2.metric("Among its size", f"{int(org['peer_rank'])} of {int(org['peer_total']):,}",
+        m4.metric("Among its size", f"{int(org['peer_rank'])} of {int(org['peer_total']):,}",
                   help=f"Scores at or above {org['peer_pct']:.0f}% of {org['category']} organizations "
                        f"in the {org['size_band']} band.")
     else:
-        m2.metric("Among its size", "n/a")
+        m4.metric("Among its size", "n/a")
     if org.get("cause_rank") is not None:
-        m3.metric("In its cause", f"{int(org['cause_rank'])} of {int(org['cause_total']):,}",
+        m5.metric("In its cause", f"{int(org['cause_rank'])} of {int(org['cause_total']):,}",
                   help=f"Scores at or above {org['cause_pct']:.0f}% of {org['category']} organizations.")
     else:
-        m3.metric("In its cause", "n/a")
-    m4.metric("Confidence", f"{org['confidence']:.2f}")
-    m5.metric("Latest revenue", money(org["latest_revenue"]))
+        m5.metric("In its cause", "n/a")
     m6.metric("Years on file", int(org["years_on_file"]))
 
     comps = json.loads(org["components"])
