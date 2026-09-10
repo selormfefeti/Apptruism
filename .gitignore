@@ -10,3 +10,5 @@ review.xlsx
 *.db-shm
 experiments/*.xlsx
 cause_check.xlsx
+returns_check.xlsx
+*.db.release

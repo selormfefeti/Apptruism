@@ -113,7 +113,11 @@ def test_ensure_database_retries_when_local_db_is_empty(tmp_path):
     conn.execute("UPDATE scores SET computed_at = '2020-01-01T00:00:00+00:00'")
     conn.commit()
     conn.close()
-    # Stale, but the download fails, so the old file stays in use.
+    # Stale, but built locally (no marker), so it is left alone without even trying.
+    assert db.ensure_database(full, url=bad, max_age_days=35, check_remote=False) == "present"
+    assert full.exists()
+    # Mark it as downloaded: now stale means a download attempt, which fails, and the old file stays.
+    db._marker(full).write_text("2020-01-01")
     assert db.ensure_database(full, url=bad, max_age_days=35, check_remote=False) == "present"
     assert full.exists()
 

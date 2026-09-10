@@ -310,7 +310,10 @@ def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35, check_remote=Tr
     global LAST_DOWNLOAD_ERROR
     path = Path(path)
     have = path.exists() and path.stat().st_size > 0 and _has_scores(path)
-    if have and not _stale(path, max_age_days) and not (check_remote and _remote_newer(path)):
+    # A database that was itself downloaded carries a marker; only those are
+    # ever replaced by a newer release. One built locally is left alone.
+    downloaded = _marker(path).exists()
+    if have and not (downloaded and (_stale(path, max_age_days) or (check_remote and _remote_newer(path)))):
         return "present"
     if path.exists() and not have:
         path.unlink()  # an empty schema from a start that could not download
@@ -323,6 +326,7 @@ def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35, check_remote=Tr
         for sidecar in (path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
             sidecar.unlink(missing_ok=True)  # journal of the file being replaced; poison for the new one
         partial.replace(path)
+        _marker(path).write_text(now())
         LAST_DOWNLOAD_ERROR = None
         return "downloaded"
     except Exception as exc:  # noqa: BLE001 - any failure means "carry on with what we have"
@@ -330,6 +334,10 @@ def ensure_database(path=DB_PATH, url=DATA_URL, max_age_days=35, check_remote=Tr
         print(f"could not download database: {LAST_DOWNLOAD_ERROR}", file=sys.stderr)
         partial.unlink(missing_ok=True)
         return "present" if have else None
+
+
+def _marker(path) -> Path:
+    return Path(path).with_name(Path(path).name + ".release")
 
 
 def _remote_newer(path) -> bool:
