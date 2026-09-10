@@ -207,7 +207,7 @@ with st.sidebar:
     st.caption(
         f"{c.get('scored', 0):,} scored of {c.get('fetched', 0):,} fetched, from {c.get('seed', 0):,} "
         f"organizations tagged in 2019 and an IRS list of {c.get('universe', 0):,} that could be scored. "
-        f"{c.get('filings', 0):,} filings on file."
+        f"{c.get('filings', 0):,} filings on file, {c.get('returns', 0):,} full returns read."
     )
     st.caption("Data: ProPublica Nonprofit Explorer, from IRS Form 990 e-files.")
 
@@ -272,10 +272,19 @@ event = st.dataframe(
     },
 )
 picked = event.selection.rows
-chosen_ein = view.iloc[picked[0]]["ein"] if picked else view.iloc[0]["ein"]
-if not picked:
+linked_ein = str(st.query_params.get("ein", "")).replace("-", "").zfill(9) if st.query_params.get("ein") else None
+if picked:
+    chosen_ein = view.iloc[picked[0]]["ein"]
+elif linked_ein:
+    chosen_ein = linked_ein  # a shareable link: ?ein=123456789
+else:
+    chosen_ein = view.iloc[0]["ein"]
     st.caption("Click a row to see why it scored what it did. Showing the top result.")
 org = db.org_detail(database(CODE_VERSION), chosen_ein)
+if org is None:
+    st.warning(f"No scored organization with EIN {chosen_ein}.")
+    st.stop()
+st.query_params["ein"] = org["ein"]
 
 # ---------------------------------------------------------------- detail
 st.divider()
@@ -301,11 +310,19 @@ with left:
     st.caption(f"{org['category']} ({via}) · {place} · {subsection}{since}{old_tag} · EIN {org['ein']}")
     if not org["active"]:
         st.warning("No longer on the IRS list of exempt organizations. Revoked, merged or dissolved.")
-    if org["mission"]:
-        st.write(org["mission"])
+    mission = org.get("irs_mission") or org.get("seed_mission")
+    if mission:
+        st.write(mission)
+        if org.get("irs_mission"):
+            st.caption(f"From its IRS return for the period ending {str(org['irs_tax_period'])[:4]}-{str(org['irs_tax_period'])[4:]}.")
+    if org.get("programs"):
+        with st.expander("What it says it does"):
+            for line in str(org["programs"]).split("\n"):
+                st.write(line)
     links = [f"[ProPublica profile]({propublica.ORG_PAGE.format(ein=int(org['ein']))})"]
-    if org["website"]:
-        site = org["website"] if str(org["website"]).startswith("http") else f"http://{org['website']}"
+    website = org.get("irs_website") or org.get("seed_website")
+    if website and str(website).strip().lower() not in ("n/a", "none", "na"):
+        site = website if str(website).lower().startswith("http") else f"http://{website}"
         links.append(f"[Website]({site})")
     st.markdown(" · ".join(links))
 
@@ -371,9 +388,21 @@ with right:
             "Net assets": money(latest["net_assets"]),
             "Officer compensation": money(latest["officer_comp"]) if latest["form"] == "990" else "not on 990-EZ",
         }
+        if org.get("program_expenses") is not None:
+            share = (org["program_expenses"] / org["irs_total_expenses"]
+                     if org.get("irs_total_expenses") else None)
+            detail["Program spending"] = money(org["program_expenses"]) + (f" ({share:.0%} of expenses)" if share else "")
+        if org.get("employees") is not None or org.get("volunteers") is not None:
+            detail["People"] = f"{int(org.get('employees') or 0):,} employees, {int(org.get('volunteers') or 0):,} volunteers"
         st.table(pd.DataFrame({"Latest filing": list(detail.values())}, index=list(detail.keys())))
         if latest.get("pdf_url"):
             st.markdown(f"[Latest return (PDF)]({latest['pdf_url']})")
+        officers = json.loads(org.get("officers") or "[]")
+        if officers:
+            st.markdown("**Who runs it** (from the IRS return)")
+            st.dataframe(pd.DataFrame([{"Name": o["name"], "Title": o.get("title") or "",
+                                        "Pay": money(o["pay"]) if o.get("pay") else ""} for o in officers]),
+                         hide_index=True, height=min(38 * (len(officers) + 1), 300))
 
 # ---------------------------------------------------------------- method
 with st.expander("How the score works"):

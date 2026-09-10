@@ -7,3 +7,4 @@ pandas>=2.3,<3
 requests>=2.32
 pytest>=8
 openpyxl>=3.1
+inflate64>=1.0     # the IRS e-file zips use Deflate64, which zipfile alone cannot read

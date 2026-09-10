@@ -1,0 +1,57 @@
+name: IRS XML
+
+# Nightly until caught up: read the IRS e-file index, pick the newest 990 or
+# 990-EZ for every organization we track that we have not read yet, stream
+# those zips for up to 300 minutes, and publish. Gives the app mission text,
+# program spending and officers. Idle once nothing is left.
+
+on:
+  schedule:
+    - cron: "37 3 * * *"   # 03:37 UTC nightly, after the backfill
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Time budget in minutes"
+        default: "300"
+
+concurrency:
+  group: data-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Start from the published database
+        run: |
+          curl -sSLf -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
+          gunzip -f apptruism.db.gz && ls -la apptruism.db
+      - name: Ingest
+        run: python irsxml.py --max-minutes ${{ github.event.inputs.minutes || 300 }} | tee irsxml.log
+      - name: Did anything change?
+        id: changed
+        run: |
+          if grep -q "^done: 0 returns" irsxml.log || grep -q "still to fetch: 0 " irsxml.log; then
+            echo "changed=no" >> "$GITHUB_OUTPUT"; echo "Nothing new to ingest." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=yes" >> "$GITHUB_OUTPUT"; tail -1 irsxml.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Compress
+        if: steps.changed.outputs.changed == 'yes'
+        run: gzip -6 -f apptruism.db && ls -la apptruism.db.gz
+      - name: Publish
+        if: steps.changed.outputs.changed == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload data apptruism.db.gz --clobber
+          gh release edit data --notes "IRS XML $(date -u +%Y-%m-%d) by the irs-xml workflow. $(tail -1 irsxml.log). Download apptruism.db.gz, gunzip it next to app.py, and the app uses it."

@@ -32,7 +32,7 @@ DB_PATH = Path(__file__).parent / "apptruism.db"
 # so a code pull that changes the schema reopens the connection and the
 # migrations in connect() run, instead of an old connection querying a
 # column it never learned about.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 
@@ -172,6 +172,32 @@ CREATE TABLE IF NOT EXISTS orgs (
     fetch_status TEXT,
     fetched_at TEXT,
     active INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS returns (
+    ein TEXT PRIMARY KEY,
+    object_id TEXT,
+    batch TEXT,
+    tax_period TEXT,
+    form TEXT,
+    mission TEXT,
+    programs TEXT,
+    program_expenses REAL,
+    total_expenses REAL,
+    website TEXT,
+    employees REAL,
+    volunteers REAL,
+    officers TEXT,
+    ingested_at TEXT
+);
+CREATE TABLE IF NOT EXISTS xml_zips (
+    name TEXT PRIMARY KEY,
+    members INTEGER,
+    scanned_at TEXT
+);
+CREATE TABLE IF NOT EXISTS xml_missing (
+    object_id TEXT PRIMARY KEY,
+    batch TEXT,
+    noted_at TEXT
 );
 CREATE TABLE IF NOT EXISTS universe (
     ein TEXT PRIMARY KEY,
@@ -513,10 +539,13 @@ RANKING_SQL = """
     LEFT JOIN seed s ON s.ein = sc.ein
     LEFT JOIN orgs o ON o.ein = sc.ein
     LEFT JOIN universe u ON u.ein = sc.ein
+    LEFT JOIN returns r ON r.ein = sc.ein
     WHERE {where}
     ORDER BY sc.score DESC, sc.confidence DESC
 """
-FULL_COLUMNS = "s.mission, s.website, sc.components, sc.confidence_factors,"
+FULL_COLUMNS = ("s.mission AS seed_mission, s.website AS seed_website, sc.components, sc.confidence_factors, "
+                "r.mission AS irs_mission, r.programs, r.program_expenses, r.total_expenses AS irs_total_expenses, "
+                "r.website AS irs_website, r.employees, r.volunteers, r.officers, r.tax_period AS irs_tax_period,")
 
 
 def _with_cause(row) -> dict:
@@ -546,7 +575,9 @@ def search_eins(conn, query) -> set[str]:
     like = f"%{query.strip()}%"
     rows = conn.execute(
         "SELECT o.ein FROM orgs o LEFT JOIN seed s ON s.ein = o.ein LEFT JOIN universe u ON u.ein = o.ein "
-        "WHERE COALESCE(o.name, s.name, u.name) LIKE ? OR s.mission LIKE ?", (like, like))
+        "LEFT JOIN returns r ON r.ein = o.ein "
+        "WHERE COALESCE(o.name, s.name, u.name) LIKE ? OR s.mission LIKE ? OR r.mission LIKE ? OR r.programs LIKE ?",
+        (like, like, like, like))
     return {r["ein"] for r in rows}
 
 
@@ -566,5 +597,6 @@ def counts(conn) -> dict:
         "filings": one("SELECT COUNT(*) FROM filings"),
         "scored": one("SELECT COUNT(*) FROM scores WHERE score IS NOT NULL"),
         "universe": one("SELECT COUNT(*) FROM universe"),
+        "returns": one("SELECT COUNT(*) FROM returns"),
         "inactive": one("SELECT COUNT(*) FROM orgs WHERE active = 0"),
     }

@@ -17,16 +17,20 @@ organizations hand-tagged by cause.
    501(c)(3)s that file a Form 990 or 990-EZ with income of $50,000 or more,
    about 373,000 of them. Organizations that have left the IRS list are
    marked inactive.
-2. `fetch.py` pulls each organization's record from the ProPublica
+2. `irsxml.py` reads the IRS e-file XML, the returns themselves, for the
+   newest 990 or 990-EZ of every organization we track: mission text,
+   program descriptions, program spending, website, headcount and officers.
+   ProPublica's extract carries none of that.
+3. `fetch.py` pulls each organization's record from the ProPublica
    Nonprofit Explorer API (free, no key) into SQLite: who they are, and a
    financial extract of every Form 990 or 990-EZ on file.
-3. `score.py` turns those filings into a 0-100 score from four components:
+4. `score.py` turns those filings into a 0-100 score from four components:
    donor growth, operating margin, reserves and officer pay share, with
    separate weights for the full 990 and the 990-EZ. A confidence figure,
    built from coverage, depth of history, recency, stability and whether
    the numbers reconcile, says how far to trust the score. Both are
    explained in the module docstring and on the app page.
-4. `app.py` is a Streamlit page: filter by cause, state and size, see the
+5. `app.py` is a Streamlit page: filter by cause, state and size, see the
    ranking, click an organization to see its components and money over time.
 
 Causes are the NTEE major groups, from the code the IRS assigns each
@@ -77,6 +81,7 @@ hosted copy on Streamlit Community Cloud follows on its own.
 ```
 app.py          Streamlit page
 universe.py     who belongs, from the IRS master file
+irsxml.py       mission, program spending and officers from the IRS e-file XML
 fetch.py        pull ProPublica data into apptruism.db
 score.py        scoring rules and the scores table
 db.py           SQLite schema and queries
@@ -110,7 +115,8 @@ average, 87% of them under \$1M in revenue.
 - The backfill of the full target set is running nightly (`backfill.yml`)
   and will take about a week from 2026-09-09. Until it finishes, the
   ranking covers the 2019 seed plus whatever has arrived so far.
-- Program expense ratio. ProPublica's extract does not carry program
-  expenses; that needs the raw XML from the IRS zips.
+- Program expense ratio as a score component. The figure now comes in
+  through `irsxml.py`; adding it to the score is a scoring change and will
+  come with evidence like the others.
 - Anything from the 2020 pitch beyond ranking: maps, news, payroll giving,
   rewards.

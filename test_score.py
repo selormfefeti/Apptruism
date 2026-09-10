@@ -198,3 +198,40 @@ def test_peer_percentiles_use_cause_and_size():
              "c": ("Human Services", "Over $10M")}
     out = score.cause_percentiles(scores, peers)
     assert out["a"] == (1, 2, 100.0) and out["b"] == (2, 2, 50.0) and out["c"] == (1, 1, 100.0)
+
+
+SAMPLE_990 = b"""<?xml version="1.0"?>
+<Return xmlns="http://www.irs.gov/efile" returnVersion="2023v5.0">
+  <ReturnHeader><TaxPeriodEndDt>2024-06-30</TaxPeriodEndDt>
+    <Filer><EIN>123456789</EIN><BusinessName><BusinessNameLine1Txt>RIVER FOOD PANTRY</BusinessNameLine1Txt></BusinessName></Filer>
+  </ReturnHeader>
+  <ReturnData>
+    <IRS990>
+      <ActivityOrMissionDesc>FEED FAMILIES IN RIVER COUNTY.</ActivityOrMissionDesc>
+      <WebsiteAddressTxt>www.riverpantry.org</WebsiteAddressTxt>
+      <TotalEmployeeCnt>4</TotalEmployeeCnt><TotalVolunteersCnt>120</TotalVolunteersCnt>
+      <CYTotalExpensesAmt>500000</CYTotalExpensesAmt>
+      <ProgSrvcAccomActy2Grp><Desc>Weekly pantry serving 900 households.</Desc></ProgSrvcAccomActy2Grp>
+      <TotalProgramServiceExpensesAmt>420000</TotalProgramServiceExpensesAmt>
+      <Form990PartVIISectionAGrp><PersonNm>JANE DOE</PersonNm><TitleTxt>EXECUTIVE DIRECTOR</TitleTxt>
+        <ReportableCompFromOrgAmt>65000</ReportableCompFromOrgAmt></Form990PartVIISectionAGrp>
+    </IRS990>
+  </ReturnData>
+</Return>"""
+
+
+def test_parse_return_reads_the_fields_the_app_needs():
+    import irsxml
+    r = irsxml.parse_return(SAMPLE_990)
+    assert r["form"] == "990" and r["ein"] == "123456789"
+    assert r["mission"] == "FEED FAMILIES IN RIVER COUNTY."
+    assert r["programs"] == "Weekly pantry serving 900 households."
+    assert r["program_expenses"] == 420000 and r["total_expenses"] == 500000
+    assert r["website"] == "www.riverpantry.org"
+    assert r["employees"] == 4 and r["volunteers"] == 120
+    assert r["officers"] == [{"name": "JANE DOE", "title": "EXECUTIVE DIRECTOR", "pay": 65000.0}]
+
+
+def test_parse_return_ignores_other_forms():
+    import irsxml
+    assert irsxml.parse_return(b'<Return xmlns="http://www.irs.gov/efile"><ReturnData><IRS990PF/></ReturnData></Return>') is None
