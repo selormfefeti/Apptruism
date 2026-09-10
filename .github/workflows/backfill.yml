@@ -7,7 +7,7 @@ name: Backfill
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC nightly
+    - cron: "23 1 * * *"   # 01:23 UTC nightly; off the hour, where GitHub queues run late
   workflow_dispatch:
     inputs:
       minutes:
