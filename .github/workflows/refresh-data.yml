@@ -41,7 +41,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Start from the published database, if there is one
         run: |
-          if curl -sSLf -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz; then
+          if curl -sSLf --retry 5 --retry-delay 30 --retry-all-errors -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz; then
             gunzip -f apptruism.db.gz && ls -la apptruism.db
           else
             echo "no published database yet; starting empty"

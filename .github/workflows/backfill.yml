@@ -34,7 +34,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Start from the published database
         run: |
-          curl -sSLf -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
+          curl -sSLf --retry 5 --retry-delay 30 --retry-all-errors -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
           gunzip -f apptruism.db.gz && ls -la apptruism.db
       - name: Load the 2019 seed
         run: python fetch.py --load-seed --limit 1
