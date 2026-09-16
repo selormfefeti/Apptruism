@@ -33,7 +33,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Download the published database
         run: |
-          curl -sSL -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
+          curl -sSLf --retry 5 --retry-delay 30 --retry-all-errors -o apptruism.db.gz https://github.com/selormfefeti/Apptruism/releases/download/data/apptruism.db.gz
           gunzip -f apptruism.db.gz
       - name: Score
         run: python score.py
