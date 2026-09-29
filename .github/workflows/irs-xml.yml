@@ -45,6 +45,9 @@ jobs:
           else
             echo "changed=yes" >> "$GITHUB_OUTPUT"; tail -1 irsxml.log >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Rebuild the search index
+        if: steps.changed.outputs.changed == 'yes'
+        run: python -c "import db; print('search index:', db.build_search_index(db.connect()))"
       - name: Compress
         if: steps.changed.outputs.changed == 'yes'
         run: gzip -6 -f apptruism.db && ls -la apptruism.db.gz

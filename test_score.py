@@ -239,3 +239,24 @@ def test_parse_return_reads_the_fields_the_app_needs():
 def test_parse_return_ignores_other_forms():
     import irsxml
     assert irsxml.parse_return(b'<Return xmlns="http://www.irs.gov/efile"><ReturnData><IRS990PF/></ReturnData></Return>') is None
+
+
+def test_fts_query_requires_every_word_and_keeps_phrases():
+    import db
+    assert db.fts_query('food pantry') == '"food" AND "pantry"'
+    assert db.fts_query('"sickle cell" seattle') == '"sickle cell" AND "seattle"'
+    assert db.fts_query('   ') == ''
+    assert db.fts_query('OR NOT (') == '"OR" AND "NOT"'  # operators are just words
+
+
+def test_search_uses_the_index_when_present(tmp_path):
+    import db
+    conn = db.connect(tmp_path / "s.db")
+    db.save_org(conn, "000000001", {"ein": "000000001", "name": "River Food Pantry"}, [], "ok")
+    db.save_org(conn, "000000002", {"ein": "000000002", "name": "Hillside Youth Soccer"}, [], "ok")
+    conn.commit()
+    assert db.search_eins(conn, "food pantry") == {"000000001"}        # slow path
+    assert db.build_search_index(conn) == 2
+    assert db.search_eins(conn, "pantry food") == {"000000001"}        # indexed, order-free
+    assert db.search_eins(conn, "soccer") == {"000000002"}
+    assert db.search_eins(conn, "soccer pantry") == set()

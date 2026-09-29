@@ -32,7 +32,7 @@ DB_PATH = Path(__file__).parent / "apptruism.db"
 # so a code pull that changes the schema reopens the connection and the
 # migrations in connect() run, instead of an old connection querying a
 # column it never learned about.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 
@@ -578,9 +578,51 @@ def org_detail(conn, ein) -> dict | None:
     return _with_cause(row) if row else None
 
 
+def build_search_index(conn) -> int:
+    """
+    A full-text index over name, mission and program text, rebuilt by the
+    pipeline after scoring and after new returns are read. Turns a search
+    over 380,000 organizations from seconds into milliseconds.
+    """
+    conn.executescript("""
+        DROP TABLE IF EXISTS search_index;
+        CREATE VIRTUAL TABLE search_index USING fts5(
+            ein UNINDEXED, name, mission, programs, tokenize='porter unicode61');
+        INSERT INTO search_index (ein, name, mission, programs)
+          SELECT o.ein, COALESCE(o.name, s.name, u.name), COALESCE(r.mission, s.mission), r.programs
+          FROM orgs o LEFT JOIN seed s ON s.ein = o.ein LEFT JOIN universe u ON u.ein = o.ein
+          LEFT JOIN returns r ON r.ein = o.ein;
+    """)
+    conn.commit()
+    return conn.execute("SELECT COUNT(*) FROM search_index").fetchone()[0]
+
+
+def _has_table(conn, name) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (name,)).fetchone() is not None
+
+
+def fts_query(text: str) -> str:
+    """Every word must appear; a quoted phrase stays a phrase. Nothing else is syntax."""
+    import re as _re
+    phrases = _re.findall(r'"([^"]+)"', text)
+    rest = _re.sub(r'"[^"]*"', " ", text)
+    words = _re.findall(r"[\w'&.-]+", rest)
+    terms = [f'"{p.strip()}"' for p in phrases if p.strip()] + [f'"{w}"' for w in words]
+    return " AND ".join(terms)
+
+
 def search_eins(conn, query) -> set[str]:
-    """EINs whose name or 2019 mission text contains the query."""
-    like = f"%{query.strip()}%"
+    """EINs whose name, mission or program text matches every word of the query."""
+    q = query.strip()
+    if not q:
+        return set()
+    if _has_table(conn, "search_index"):
+        fts = fts_query(q)
+        if not fts:
+            return set()
+        rows = conn.execute("SELECT ein FROM search_index WHERE search_index MATCH ?", (fts,))
+        return {r["ein"] for r in rows}
+    like = f"%{q}%"  # no index yet: the slow path
     rows = conn.execute(
         "SELECT o.ein FROM orgs o LEFT JOIN seed s ON s.ein = o.ein LEFT JOIN universe u ON u.ein = o.ein "
         "LEFT JOIN returns r ON r.ein = o.ein "

@@ -317,6 +317,7 @@ def main() -> None:
     for ein, (rank, total, pct) in cause_percentiles(scores, peers).items():
         results[ein].update(peer_rank=rank, peer_total=total, peer_pct=pct)
     db.save_scores(conn, results)
+    print(f"search index: {db.build_search_index(conn):,} organizations")
     scored = [r["score"] for r in results.values() if r["score"] is not None]
     print(f"scored {len(results)} organizations")
     if scored:
