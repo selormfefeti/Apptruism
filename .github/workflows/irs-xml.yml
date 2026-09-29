@@ -47,7 +47,7 @@ jobs:
           fi
       - name: Rebuild the search index
         if: steps.changed.outputs.changed == 'yes'
-        run: python -c "import db; print('search index:', db.build_search_index(db.connect()))"
+        run: python -c "import db; c = db.connect(); print('search index:', db.build_search_index(c)); print('materialized:', db.materialize(c)['returns'])"
       - name: Compress
         if: steps.changed.outputs.changed == 'yes'
         run: gzip -6 -f apptruism.db && ls -la apptruism.db.gz

@@ -260,3 +260,19 @@ def test_search_uses_the_index_when_present(tmp_path):
     assert db.search_eins(conn, "pantry food") == {"000000001"}        # indexed, order-free
     assert db.search_eins(conn, "soccer") == {"000000002"}
     assert db.search_eins(conn, "soccer pantry") == set()
+
+
+def test_materialized_ranking_matches_the_live_query(tmp_path):
+    import db
+    conn = db.connect(tmp_path / "m.db")
+    for i, sc in enumerate((90.0, 70.0), 1):
+        ein = f"00000000{i}"
+        db.save_org(conn, ein, {"ein": ein, "name": f"Org {i}", "subsection_code": 3}, [filing(2024)], "ok")
+        db.save_scores(conn, {ein: dict(score=sc, confidence=1, components={}, latest_year=2024,
+                                        latest_revenue=1, years_on_file=1, size_band="Unknown")})
+    live = db.ranking_rows(conn, slim=True)
+    stats = db.materialize(conn)
+    stored = db.ranking_rows(conn, slim=True)
+    assert [r["ein"] for r in stored] == [r["ein"] for r in live] == ["000000001", "000000002"]
+    assert stored[0]["category"] == live[0]["category"]
+    assert stats["scored"] == 2 and db.counts(conn)["scored"] == 2

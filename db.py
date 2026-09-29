@@ -32,7 +32,7 @@ DB_PATH = Path(__file__).parent / "apptruism.db"
 # so a code pull that changes the schema reopens the connection and the
 # migrations in connect() run, instead of an old connection querying a
 # column it never learned about.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SEED_PATH = Path(__file__).parent / "seed" / "seed_orgs_2019.csv"
 
@@ -562,13 +562,50 @@ def _with_cause(row) -> dict:
     return row
 
 
+RANKING_COLUMNS = [
+    "ein", "name", "seed_category", "subcategory", "city", "state", "ntee_code", "subsection_code",
+    "active", "ruling", "income_amt", "score", "confidence", "latest_year", "latest_revenue",
+    "years_on_file", "size_band", "cause_rank", "cause_total", "cause_pct", "peer_rank", "peer_total",
+    "peer_pct", "donor_growth", "category", "cause_source",
+]
+
+
+def _live_ranking_rows(conn) -> list[dict]:
+    sql = RANKING_SQL.format(extra="", where="sc.score IS NOT NULL")
+    return [_with_cause(r) for r in conn.execute(sql)]
+
+
+def materialize(conn) -> dict:
+    """
+    Write the ranking and the sidebar counts to plain tables so the app's
+    first load reads them flat instead of joining four tables over 350,000
+    organizations. Called by the pipeline after scoring.
+    """
+    rows = _live_ranking_rows(conn)
+    conn.execute("DROP TABLE IF EXISTS ranking")
+    conn.execute(f"CREATE TABLE ranking ({', '.join(RANKING_COLUMNS)})")
+    conn.executemany(
+        f"INSERT INTO ranking VALUES ({', '.join('?' * len(RANKING_COLUMNS))})",
+        ([r.get(c) for c in RANKING_COLUMNS] for r in rows))
+    stats = _live_counts(conn)
+    conn.execute("CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER)")
+    conn.execute("DELETE FROM stats")
+    conn.executemany("INSERT INTO stats VALUES (?, ?)", stats.items())
+    conn.commit()
+    return stats
+
+
 def ranking_rows(conn, slim=False) -> list[dict]:
     """
-    Every scored organization. slim=True leaves out mission text and the
-    component JSON, which the app fetches per organization instead, so the
-    frame for 370k organizations stays small.
+    Every scored organization, best first. slim=True is what the app's table
+    needs and comes from the materialized ranking table when there is one;
+    the full rows carry mission text and component JSON.
     """
-    sql = RANKING_SQL.format(extra="" if slim else FULL_COLUMNS, where="sc.score IS NOT NULL")
+    if slim:
+        if _has_table(conn, "ranking"):
+            return [dict(r) for r in conn.execute("SELECT * FROM ranking ORDER BY score DESC, confidence DESC")]
+        return _live_ranking_rows(conn)
+    sql = RANKING_SQL.format(extra=FULL_COLUMNS, where="sc.score IS NOT NULL")
     return [_with_cause(r) for r in conn.execute(sql)]
 
 
@@ -637,7 +674,7 @@ def scores_stamp(conn) -> str:
     return row[0] or ""
 
 
-def counts(conn) -> dict:
+def _live_counts(conn) -> dict:
     one = lambda sql: conn.execute(sql).fetchone()[0]
     return {
         "seed": one("SELECT COUNT(*) FROM seed"),
@@ -650,3 +687,11 @@ def counts(conn) -> dict:
         "returns": one("SELECT COUNT(*) FROM returns"),
         "inactive": one("SELECT COUNT(*) FROM orgs WHERE active = 0"),
     }
+
+
+def counts(conn) -> dict:
+    if _has_table(conn, "stats"):
+        stored = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM stats")}
+        if stored:
+            return stored
+    return _live_counts(conn)

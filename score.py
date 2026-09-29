@@ -318,6 +318,7 @@ def main() -> None:
         results[ein].update(peer_rank=rank, peer_total=total, peer_pct=pct)
     db.save_scores(conn, results)
     print(f"search index: {db.build_search_index(conn):,} organizations")
+    print(f"materialized ranking and counts: {db.materialize(conn)['scored']:,} scored")
     scored = [r["score"] for r in results.values() if r["score"] is not None]
     print(f"scored {len(results)} organizations")
     if scored:
