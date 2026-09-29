@@ -275,10 +275,10 @@ picked = event.selection.rows
 linked_ein = str(st.query_params.get("ein", "")).replace("-", "").zfill(9) if st.query_params.get("ein") else None
 if picked:
     chosen_ein = view.iloc[picked[0]]["ein"]
-elif linked_ein:
-    chosen_ein = linked_ein  # a shareable link: ?ein=123456789
+elif linked_ein and linked_ein in set(view["ein"]):
+    chosen_ein = linked_ein  # a shareable link: ?ein=123456789, as long as it is still in the list
 else:
-    chosen_ein = view.iloc[0]["ein"]
+    chosen_ein = view.iloc[0]["ein"]  # after a search or a filter, the top result
 org = db.org_detail(database(CODE_VERSION), chosen_ein)
 if org is None:
     st.warning(f"No scored organization with EIN {chosen_ein}.")
