@@ -25,9 +25,25 @@ with sync_playwright() as p:
         print("app was asleep; asked for it to wake")
     except Exception:  # noqa: BLE001 - no button means it is awake
         pass
-    # Wait for the ranking header, which only appears once the data is loaded.
-    page.wait_for_function(
-        "() => /\\d[\\d,]* organizations/.test(document.body.innerText)", timeout=300_000)
+    # Community Cloud serves the app inside an iframe, so the ranking header
+    # appears in a child frame, not the top page. Poll every frame.
+    deadline = time.monotonic() + 300
+    seen = ""
+    while time.monotonic() < deadline:
+        for frame in page.frames:
+            try:
+                text = " ".join(frame.inner_text("body").split())
+            except Exception:  # noqa: BLE001 - cross-origin or not loaded yet
+                continue
+            if "organizations" in text:
+                seen = text
+                break
+        if seen:
+            break
+        page.wait_for_timeout(2_000)
+    if not seen:
+        page.screenshot(path="visit-failed.png")
+        raise SystemExit("the ranking never rendered; see visit-failed.png")
     page.wait_for_timeout(3_000)  # hold the session open briefly so it registers
     print(f"ranking rendered after {time.monotonic() - start:.0f}s")
     browser.close()

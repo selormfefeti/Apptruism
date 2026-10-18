@@ -12,3 +12,4 @@ experiments/*.xlsx
 cause_check.xlsx
 returns_check.xlsx
 *.db.release
+visit-failed.png
