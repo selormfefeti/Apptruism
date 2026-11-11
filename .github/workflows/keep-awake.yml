@@ -12,14 +12,16 @@ on:
 jobs:
   visit:
     runs-on: ubuntu-latest
-    timeout-minutes: 16
+    timeout-minutes: 28
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install playwright && playwright install --with-deps chromium
-      - run: python tools/visit.py
+      - run: pip install playwright
+        timeout-minutes: 3
+      - name: Visit, with one retry
+        run: python tools/visit.py || (echo "first visit failed; trying once more" && sleep 60 && python tools/visit.py)
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

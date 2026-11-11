@@ -8,6 +8,7 @@ not count, so the keep-awake workflow runs this every few hours.
 """
 
 import re
+import subprocess
 import sys
 import time
 
@@ -16,8 +17,26 @@ from playwright.sync_api import sync_playwright
 URL = sys.argv[1] if len(sys.argv) > 1 else "https://apptruism.streamlit.app/"
 WAIT_SECONDS = 600
 
+def fail(reason: str) -> None:
+    # A workflow annotation: shows on the run page, in the failure email's
+    # run view, and through the public API, so nobody needs the raw log.
+    print(f"::error title=Keep-awake visit failed::{reason}", flush=True)
+    raise SystemExit(1)
+
+
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    # GitHub's runners ship with Chrome, so use it and skip the 150 MB
+    # browser download that once hung the job. Fall back to Playwright's own
+    # Chromium where Chrome is missing.
+    try:
+        browser = p.chromium.launch(channel="chrome")
+    except Exception:  # noqa: BLE001
+        try:
+            browser = p.chromium.launch()
+        except Exception:  # noqa: BLE001 - neither is present: fetch Chromium once
+            subprocess.run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+                           check=True, timeout=420)
+            browser = p.chromium.launch()
     page = browser.new_page()
     start = time.monotonic()
     page.goto(URL, wait_until="domcontentloaded", timeout=120_000)
@@ -55,7 +74,8 @@ with sync_playwright() as p:
         page.wait_for_timeout(2_000)
     if not seen:
         page.screenshot(path="visit-failed.png")
-        raise SystemExit("the ranking never rendered; see visit-failed.png")
+        longest = max(snapshots, key=len, default="")
+        fail(f"no ranking after {WAIT_SECONDS}s. The app showed: {longest[:300] or 'nothing'}")
     page.wait_for_timeout(3_000)  # hold the session open briefly so it registers
     print(f"ranking rendered after {time.monotonic() - start:.0f}s")
     browser.close()
